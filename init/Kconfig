@@ -65,7 +65,7 @@ config CROSS_COMPILE
 
 config COMPILE_TEST
 	bool "Compile also drivers which will not load"
-	depends on HAS_IOMEM
+	default n
 	help
 	  Some drivers can be compiled on a different platform than they are
 	  intended to be run on. Despite they cannot be loaded there (or even
@@ -833,8 +833,7 @@ config IKCONFIG_PROC
 
 config LOG_BUF_SHIFT
 	int "Kernel log buffer size (16 => 64KB, 17 => 128KB)"
-	range 12 25 if !H8300
-	range 12 19 if H8300
+	range 12 25
 	default 17
 	depends on PRINTK
 	help
@@ -1065,6 +1064,7 @@ config MEMCG_SWAP
 	  if boot option "swapaccount=0" is set, swap will not be accounted.
 	  Now, memory usage of swap_cgroup is 2 bytes per entry. If swap page
 	  size is 4096bytes, 512k per 1Gbytes of swap.
+
 config MEMCG_SWAP_ENABLED
 	bool "Memory Resource Controller Swap Extension enabled by default"
 	depends on MEMCG_SWAP
@@ -1078,6 +1078,12 @@ config MEMCG_SWAP_ENABLED
 	  For those who want to have the feature enabled by default should
 	  select this option (if, for some reason, they need to disable it
 	  then swapaccount=0 does the trick).
+
+config MEMCG_FORCE_USE_VM_SWAPPINESS
+	bool "Force to use vm_swappiness instead of memcg->swappiness"
+	depends on MEMCG_SWAP
+	default y
+
 config MEMCG_KMEM
 	bool "Memory Resource Controller Kernel Memory accounting"
 	depends on MEMCG
@@ -1133,7 +1139,6 @@ config FAIR_GROUP_SCHED
 config CFS_BANDWIDTH
 	bool "CPU bandwidth provisioning for FAIR_GROUP_SCHED"
 	depends on FAIR_GROUP_SCHED
-	depends on !SCHED_WALT
 	default n
 	help
 	  This option allows users to define CPU bandwidth rates (limits) for
@@ -1394,6 +1399,12 @@ config CC_OPTIMIZE_FOR_PERFORMANCE
 	  This is the default optimization level for the kernel, building
 	  with the "-O2" compiler flag for best performance and most
 	  helpful compile-time warnings.
+
+config CC_OPTIMIZE_FOR_PERFORMANCE_O3_OFAST_SUB_OPTIONS
+	bool "Optimize more for performance with O3 and Ofast sub-options"
+	help
+	  Choosing this option will pass "-O3" and Ofast sub-options to your compiler
+	  to optimize the kernel yet more for performance.config 
 
 config CC_OPTIMIZE_FOR_SIZE
 	bool "Optimize for size"
