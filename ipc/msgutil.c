@@ -18,7 +18,6 @@
 #include <linux/utsname.h>
 #include <linux/proc_ns.h>
 #include <linux/uaccess.h>
-#include <linux/sched.h>
 
 #include "util.h"
 
@@ -67,9 +66,6 @@ static struct msg_msg *alloc_msg(size_t len)
 	pseg = &msg->next;
 	while (len > 0) {
 		struct msg_msgseg *seg;
-
-		cond_resched();
-
 		alen = min(len, DATALEN_SEG);
 		seg = kmalloc(sizeof(*seg) + alen, GFP_KERNEL);
 		if (seg == NULL)
@@ -182,8 +178,6 @@ void free_msg(struct msg_msg *msg)
 	kfree(msg);
 	while (seg != NULL) {
 		struct msg_msgseg *tmp = seg->next;
-
-		cond_resched();
 		kfree(seg);
 		seg = tmp;
 	}
