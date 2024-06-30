@@ -57,7 +57,7 @@ static int cma_maxchunk_get(void *data, u64 *val)
 	mutex_lock(&cma->lock);
 	for (;;) {
 		start = find_next_zero_bit(cma->bitmap, bitmap_maxno, end);
-		if (start >= bitmap_maxno)
+		if (start >= cma->count)
 			break;
 		end = find_next_bit(cma->bitmap, bitmap_maxno, start);
 		maxchunk = max(end - start, maxchunk);
@@ -164,12 +164,16 @@ DEFINE_SIMPLE_ATTRIBUTE(cma_alloc_fops, NULL, cma_alloc_write, "%llu\n");
 static void cma_debugfs_add_one(struct cma *cma, int idx)
 {
 	struct dentry *tmp;
-	char name[16];
 	int u32s;
 
-	sprintf(name, "cma-%d", idx);
+	if (cma->name) {
+		tmp = debugfs_create_dir(cma->name, cma_debugfs_root);
+	} else {
+		char name[16];
 
-	tmp = debugfs_create_dir(name, cma_debugfs_root);
+		sprintf(name, "cma-%d", idx);
+		tmp = debugfs_create_dir(name, cma_debugfs_root);
+	}
 
 	debugfs_create_file("alloc", S_IWUSR, tmp, cma,
 				&cma_alloc_fops);
