@@ -626,9 +626,7 @@ repeat:
 	delay_msecs = top->delay_secs * 1000;
 	set_term_quiet_input(&save);
 	/* trash return*/
-	clearerr(stdin);
-	if (poll(&stdin_poll, 1, 0) > 0)
-		getc(stdin);
+	getc(stdin);
 
 	while (!done) {
 		perf_top__print_sym_table(top);
@@ -1322,9 +1320,8 @@ int cmd_top(int argc, const char **argv, const char *prefix __maybe_unused)
 	symbol_conf.priv_size = sizeof(struct annotation);
 
 	symbol_conf.try_vmlinux_path = (symbol_conf.vmlinux_name == NULL);
-	status = symbol__init(NULL);
-	if (status < 0)
-		goto out_delete_evlist;
+	if (symbol__init(NULL) < 0)
+		return -1;
 
 	sort__setup_elide(stdout);
 

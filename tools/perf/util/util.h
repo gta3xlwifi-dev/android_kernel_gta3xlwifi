@@ -76,6 +76,7 @@
 #include <sys/ttydefaults.h>
 #include <api/fs/tracing_path.h>
 #include <termios.h>
+#include <linux/bitops.h>
 #include <termios.h>
 
 extern const char *graph_line;

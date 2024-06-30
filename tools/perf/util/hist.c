@@ -131,8 +131,6 @@ void hists__calc_col_len(struct hists *hists, struct hist_entry *h)
 			symlen = unresolved_col_width + 4 + 2;
 			hists__new_col_len(hists, HISTC_MEM_DADDR_SYMBOL,
 					   symlen);
-			hists__new_col_len(hists, HISTC_MEM_DCACHELINE,
-					   symlen);
 		}
 
 		if (h->mem_info->iaddr.sym) {
@@ -1082,7 +1080,7 @@ void hists__collapse_resort(struct hists *hists, struct ui_progress *prog)
 	}
 }
 
-static int64_t hist_entry__sort(struct hist_entry *a, struct hist_entry *b)
+static int hist_entry__sort(struct hist_entry *a, struct hist_entry *b)
 {
 	struct perf_hpp_fmt *fmt;
 	int64_t cmp = 0;
