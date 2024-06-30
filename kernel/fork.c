@@ -78,6 +78,7 @@
 #include <linux/sysctl.h>
 #include <linux/kcov.h>
 #include <linux/cpufreq_times.h>
+#include <linux/task_integrity.h>
 
 #include <asm/pgtable.h>
 #include <asm/pgalloc.h>
@@ -90,6 +91,10 @@
 
 #define CREATE_TRACE_POINTS
 #include <trace/events/task.h>
+
+#ifdef CONFIG_SECURITY_DEFEX
+#include <linux/defex.h>
+#endif
 
 /*
  * Minimum number of threads to boot the kernel
@@ -164,7 +169,9 @@ void __weak arch_release_thread_stack(unsigned long *stack)
 static unsigned long *alloc_thread_stack_node(struct task_struct *tsk,
 						  int node)
 {
-	struct page *page = alloc_kmem_pages_node(node, THREADINFO_GFP,
+	gfp_t gfp_mask = current->flags & PF_NOFREEZE ? FUSE_THREADINFO_GFP :
+				THREADINFO_GFP;
+	struct page *page = alloc_kmem_pages_node(node, gfp_mask,
 						  THREAD_SIZE_ORDER);
 
 	return page ? page_address(page) : NULL;
@@ -183,7 +190,9 @@ static struct kmem_cache *thread_stack_cache;
 static unsigned long *alloc_thread_stack_node(struct task_struct *tsk,
 						  int node)
 {
-	return kmem_cache_alloc_node(thread_stack_cache, THREADINFO_GFP, node);
+	gfp_t gfp_mask = current->flags & PF_NOFREEZE ? FUSE_THREADINFO_GFP :
+				THREADINFO_GFP;
+	return kmem_cache_alloc_node(thread_stack_cache, gfp_mask, node);
 }
 
 static void free_thread_stack(unsigned long *stack)
@@ -259,7 +268,7 @@ void __put_task_struct(struct task_struct *tsk)
 	WARN_ON(tsk == current);
 
 	cgroup_free(tsk);
-	task_numa_free(tsk, true);
+	task_numa_free(tsk);
 	security_task_free(tsk);
 	exit_creds(tsk);
 	delayacct_tsk_free(tsk);
@@ -914,8 +923,24 @@ static int wait_for_vfork_done(struct task_struct *child,
  * restoring the old one. . .
  * Eric Biederman 10 January 1998
  */
-static void mm_release(struct task_struct *tsk, struct mm_struct *mm)
+void mm_release(struct task_struct *tsk, struct mm_struct *mm)
 {
+	/* Get rid of any futexes when releasing the mm */
+#ifdef CONFIG_FUTEX
+	if (unlikely(tsk->robust_list)) {
+		exit_robust_list(tsk);
+		tsk->robust_list = NULL;
+	}
+#ifdef CONFIG_COMPAT
+	if (unlikely(tsk->compat_robust_list)) {
+		compat_exit_robust_list(tsk);
+		tsk->compat_robust_list = NULL;
+	}
+#endif
+	if (unlikely(!list_empty(&tsk->pi_state_list)))
+		exit_pi_state_list(tsk);
+#endif
+
 	uprobe_free_utask(tsk);
 
 	/* Get rid of any cached register state */
@@ -946,18 +971,6 @@ static void mm_release(struct task_struct *tsk, struct mm_struct *mm)
 	 */
 	if (tsk->vfork_done)
 		complete_vfork_done(tsk);
-}
-
-void exit_mm_release(struct task_struct *tsk, struct mm_struct *mm)
-{
-	futex_exit_release(tsk);
-	mm_release(tsk, mm);
-}
-
-void exec_mm_release(struct task_struct *tsk, struct mm_struct *mm)
-{
-	futex_exec_release(tsk);
-	mm_release(tsk, mm);
 }
 
 /*
@@ -1288,6 +1301,69 @@ init_task_pid(struct task_struct *task, enum pid_type type, struct pid *pid)
 	 task->pids[type].pid = pid;
 }
 
+#ifdef CONFIG_FIVE
+static int dup_task_integrity(unsigned long clone_flags,
+					struct task_struct *tsk)
+{
+	int ret = 0;
+
+	if (clone_flags & CLONE_VM) {
+		task_integrity_get(current->integrity);
+		tsk->integrity = current->integrity;
+	} else {
+		tsk->integrity = task_integrity_alloc();
+
+		if (!tsk->integrity)
+			ret = -ENOMEM;
+	}
+
+	return ret;
+}
+
+static inline void task_integrity_cleanup(struct task_struct *tsk)
+{
+	task_integrity_put(tsk->integrity);
+}
+
+static inline int task_integrity_apply(unsigned long clone_flags,
+						struct task_struct *tsk)
+{
+	int ret = 0;
+
+	if (!(clone_flags & CLONE_VM))
+		ret = five_fork(current, tsk);
+
+	return ret;
+}
+#else
+static inline int dup_task_integrity(unsigned long clone_flags,
+						struct task_struct *tsk)
+{
+	return 0;
+}
+
+static inline void task_integrity_cleanup(struct task_struct *tsk)
+{
+}
+
+static inline int task_integrity_apply(unsigned long clone_flags,
+						struct task_struct *tsk)
+{
+	return 0;
+}
+
+#endif
+
+#ifdef CONFIG_RKP_KDP
+void rkp_assign_pgd(struct task_struct *p)
+{
+	u64 pgd;
+	pgd = (u64)(p->mm ? p->mm->pgd :swapper_pg_dir);
+
+	uh_call(UH_APP_RKP, RKP_KDP_X43, (u64)p->cred, (u64)pgd, 0, 0);
+}
+#endif /*CONFIG_RKP_KDP*/
+
 /*
  * This creates a new process as a copy of the old one,
  * but does not actually start it yet.
@@ -1418,6 +1494,7 @@ static struct task_struct *copy_process(unsigned long clone_flags,
 	p->utime = p->stime = p->gtime = 0;
 	p->utimescaled = p->stimescaled = 0;
 	prev_cputime_init(&p->prev_cputime);
+	p->cpu_power = 0;
 
 #ifdef CONFIG_VIRT_CPU_ACCOUNTING_GEN
 	seqlock_init(&p->vtime_seqlock);
@@ -1536,8 +1613,14 @@ static struct task_struct *copy_process(unsigned long clone_flags,
 #ifdef CONFIG_BLOCK
 	p->plug = NULL;
 #endif
-	futex_init_task(p);
-
+#ifdef CONFIG_FUTEX
+	p->robust_list = NULL;
+#ifdef CONFIG_COMPAT
+	p->compat_robust_list = NULL;
+#endif
+	INIT_LIST_HEAD(&p->pi_state_list);
+	p->pi_state_cache = NULL;
+#endif
 	/*
 	 * sigaltstack should be cleared when sharing the same VM
 	 */
@@ -1558,9 +1641,14 @@ static struct task_struct *copy_process(unsigned long clone_flags,
 	/* ok, now we should be set up.. */
 	p->pid = pid_nr(pid);
 	if (clone_flags & CLONE_THREAD) {
+		p->exit_signal = -1;
 		p->group_leader = current->group_leader;
 		p->tgid = current->tgid;
 	} else {
+		if (clone_flags & CLONE_PARENT)
+			p->exit_signal = current->group_leader->exit_signal;
+		else
+			p->exit_signal = (clone_flags & CSIGNAL);
 		p->group_leader = p;
 		p->tgid = p->pid;
 	}
@@ -1581,6 +1669,10 @@ static struct task_struct *copy_process(unsigned long clone_flags,
 	 * progress.
 	 */
 	retval = cgroup_can_fork(p, cgrp_ss_priv);
+	if (retval)
+		goto bad_fork_free_pid;
+
+	retval = dup_task_integrity(clone_flags, p);
 	if (retval)
 		goto bad_fork_free_pid;
 
@@ -1605,14 +1697,9 @@ static struct task_struct *copy_process(unsigned long clone_flags,
 	if (clone_flags & (CLONE_PARENT|CLONE_THREAD)) {
 		p->real_parent = current->real_parent;
 		p->parent_exec_id = current->parent_exec_id;
-		if (clone_flags & CLONE_THREAD)
-			p->exit_signal = -1;
-		else
-			p->exit_signal = current->group_leader->exit_signal;
 	} else {
 		p->real_parent = current;
 		p->parent_exec_id = current->self_exec_id;
-		p->exit_signal = (clone_flags & CSIGNAL);
 	}
 
 	spin_lock(&current->sighand->siglock);
@@ -1640,6 +1727,10 @@ static struct task_struct *copy_process(unsigned long clone_flags,
 		retval = -ENOMEM;
 		goto bad_fork_cancel_cgroup;
 	}
+
+	retval = task_integrity_apply(clone_flags, p);
+	if (retval)
+		goto bad_fork_cancel_cgroup;
 
 	if (likely(p->pid)) {
 		ptrace_init_task(p, (clone_flags & CLONE_PTRACE) || trace);
@@ -1686,13 +1777,17 @@ static struct task_struct *copy_process(unsigned long clone_flags,
 
 	trace_task_newtask(p, clone_flags);
 	uprobe_copy_process(p, clone_flags);
-
+#ifdef CONFIG_RKP_KDP
+	if(rkp_cred_enable)
+		rkp_assign_pgd(p);
+#endif/*CONFIG_RKP_KDP*/
 	return p;
 
 bad_fork_cancel_cgroup:
 	spin_unlock(&current->sighand->siglock);
 	write_unlock_irq(&tasklist_lock);
 	cgroup_cancel_fork(p, cgrp_ss_priv);
+	task_integrity_cleanup(p);
 bad_fork_free_pid:
 	threadgroup_change_end(current);
 	if (pid != &init_struct_pid)
@@ -1809,6 +1904,10 @@ long _do_fork(unsigned long clone_flags,
 
 		pid = get_task_pid(p, PIDTYPE_PID);
 		nr = pid_vnr(pid);
+
+#ifdef CONFIG_SECURITY_DEFEX
+		task_defex_zero_creds(p);
+#endif
 
 		if (clone_flags & CLONE_PARENT_SETTID)
 			put_user(nr, parent_tidptr);
@@ -2173,7 +2272,7 @@ int sysctl_max_threads(struct ctl_table *table, int write,
 	struct ctl_table t;
 	int ret;
 	int threads = max_threads;
-	int min = 1;
+	int min = MIN_THREADS;
 	int max = MAX_THREADS;
 
 	t = *table;
@@ -2185,7 +2284,7 @@ int sysctl_max_threads(struct ctl_table *table, int write,
 	if (ret || !write)
 		return ret;
 
-	max_threads = threads;
+	set_max_threads(threads);
 
 	return 0;
 }

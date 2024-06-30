@@ -3311,10 +3311,6 @@ static int cgroup_rename(struct kernfs_node *kn, struct kernfs_node *new_parent,
 	struct cgroup *cgrp = kn->priv;
 	int ret;
 
-	/* do not accept '\n' to prevent making /proc/<pid>/cgroup unparsable */
-	if (strchr(new_name_str, '\n'))
-		return -EINVAL;
-
 	if (kernfs_type(kn) != KERNFS_DIR)
 		return -ENOTDIR;
 	if (kn->parent != new_parent)
@@ -4364,6 +4360,9 @@ static int pidlist_array_load(struct cgroup *cgrp, enum cgroup_filetype type,
 	while ((tsk = css_task_iter_next(&it))) {
 		if (unlikely(n == length))
 			break;
+		/* avoid the use-after-free for task */
+		if (unlikely(tsk->state == TASK_DEAD))
+			continue;
 		/* get tgid or pid for procs or tasks file respectively */
 		if (type == CGROUP_FILE_PROCS)
 			pid = task_tgid_vnr(tsk);
@@ -5959,7 +5958,7 @@ static int cgroup_css_links_read(struct seq_file *seq, void *v)
 		struct task_struct *task;
 		int count = 0;
 
-		seq_printf(seq, "css_set %p\n", cset);
+		seq_printf(seq, "css_set %pK\n", cset);
 
 		list_for_each_entry(task, &cset->tasks, cg_list) {
 			if (count++ > MAX_TASKS_SHOWN_PER_CSS)

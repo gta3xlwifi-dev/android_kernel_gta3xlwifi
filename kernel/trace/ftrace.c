@@ -32,7 +32,6 @@
 #include <linux/list.h>
 #include <linux/hash.h>
 #include <linux/rcupdate.h>
-#include <linux/kprobes.h>
 
 #include <trace/events/sched.h>
 
@@ -637,7 +636,8 @@ static int function_stat_show(struct seq_file *m, void *v)
 	}
 
 #ifdef CONFIG_FUNCTION_GRAPH_TRACER
-	avg = div64_ul(rec->time, rec->counter);
+	avg = rec->time;
+	do_div(avg, rec->counter);
 	if (tracing_thresh && (avg < tracing_thresh))
 		goto out;
 #endif
@@ -663,8 +663,7 @@ static int function_stat_show(struct seq_file *m, void *v)
 		 * Divide only 1000 for ns^2 -> us^2 conversion.
 		 * trace_print_graph_duration will divide 1000 again.
 		 */
-		stddev = div64_ul(stddev,
-				  rec->counter * (rec->counter - 1) * 1000);
+		do_div(stddev, rec->counter * (rec->counter - 1) * 1000);
 	}
 
 	trace_seq_init(&s);
@@ -1943,18 +1942,12 @@ static int ftrace_hash_ipmodify_update(struct ftrace_ops *ops,
 
 static void print_ip_ins(const char *fmt, unsigned char *p)
 {
-	char ins[MCOUNT_INSN_SIZE];
 	int i;
-
-	if (probe_kernel_read(ins, p, MCOUNT_INSN_SIZE)) {
-		printk(KERN_CONT "%s[FAULT] %px\n", fmt, p);
-		return;
-	}
 
 	printk(KERN_CONT "%s", fmt);
 
 	for (i = 0; i < MCOUNT_INSN_SIZE; i++)
-		printk(KERN_CONT "%s%02x", i ? ":" : "", ins[i]);
+		printk(KERN_CONT "%s%02x", i ? ":" : "", p[i]);
 }
 
 static struct ftrace_ops *
@@ -2829,11 +2822,8 @@ static int referenced_filters(struct dyn_ftrace *rec)
 	int cnt = 0;
 
 	for (ops = ftrace_ops_list; ops != &ftrace_list_end; ops = ops->next) {
-		if (ops_references_rec(ops, rec)) {
-			cnt++;
-			if (ops->flags & FTRACE_OPS_FL_SAVE_REGS)
-				rec->flags |= FTRACE_FL_REGS;
-		}
+		if (ops_references_rec(ops, rec))
+		    cnt++;
 	}
 
 	return cnt;
@@ -2883,7 +2873,7 @@ static int ftrace_update_code(struct module *mod, struct ftrace_page *new_pgs)
 			p = &pg->records[i];
 			if (test)
 				cnt += referenced_filters(p);
-			p->flags += cnt;
+			p->flags = cnt;
 
 			/*
 			 * Do the initial record conversion from mcount jump
@@ -4407,11 +4397,8 @@ int ftrace_regex_release(struct inode *inode, struct file *file)
 
 	parser = &iter->parser;
 	if (trace_parser_loaded(parser)) {
-		int enable = !(iter->flags & FTRACE_ITER_NOTRACE);
-
 		parser->buffer[parser->idx] = 0;
-		ftrace_process_regex(iter->hash, parser->buffer,
-				     parser->idx, enable);
+		ftrace_match_records(iter->hash, parser->buffer, parser->idx);
 	}
 
 	trace_parser_put(parser);
@@ -5178,14 +5165,14 @@ static struct ftrace_ops control_ops = {
 	INIT_OPS_HASH(control_ops)
 };
 
-static nokprobe_inline void
+static inline void
 __ftrace_ops_list_func(unsigned long ip, unsigned long parent_ip,
 		       struct ftrace_ops *ignored, struct pt_regs *regs)
 {
 	struct ftrace_ops *op;
 	int bit;
 
-	bit = trace_test_and_set_recursion(TRACE_LIST_START);
+	bit = trace_test_and_set_recursion(TRACE_LIST_START, TRACE_LIST_MAX);
 	if (bit < 0)
 		return;
 
@@ -5227,13 +5214,11 @@ static void ftrace_ops_list_func(unsigned long ip, unsigned long parent_ip,
 {
 	__ftrace_ops_list_func(ip, parent_ip, NULL, regs);
 }
-NOKPROBE_SYMBOL(ftrace_ops_list_func);
 #else
 static void ftrace_ops_no_ops(unsigned long ip, unsigned long parent_ip)
 {
 	__ftrace_ops_list_func(ip, parent_ip, NULL, NULL);
 }
-NOKPROBE_SYMBOL(ftrace_ops_no_ops);
 #endif
 
 /*
@@ -5246,7 +5231,7 @@ static void ftrace_ops_recurs_func(unsigned long ip, unsigned long parent_ip,
 {
 	int bit;
 
-	bit = trace_test_and_set_recursion(TRACE_LIST_START);
+	bit = trace_test_and_set_recursion(TRACE_LIST_START, TRACE_LIST_MAX);
 	if (bit < 0)
 		return;
 
@@ -5254,7 +5239,6 @@ static void ftrace_ops_recurs_func(unsigned long ip, unsigned long parent_ip,
 
 	trace_clear_recursion(bit);
 }
-NOKPROBE_SYMBOL(ftrace_ops_recurs_func);
 
 /**
  * ftrace_ops_get_func - get the function a trampoline should call
@@ -5717,6 +5701,7 @@ static int alloc_retstack_tasklist(struct ftrace_ret_stack **ret_stack_list)
 		}
 
 		if (t->ret_stack == NULL) {
+			atomic_set(&t->tracing_graph_pause, 0);
 			atomic_set(&t->trace_overrun, 0);
 			t->curr_ret_stack = -1;
 			/* Make sure the tasks see the -1 first: */
@@ -5928,6 +5913,7 @@ static DEFINE_PER_CPU(struct ftrace_ret_stack *, idle_ret_stack);
 static void
 graph_init_task(struct task_struct *t, struct ftrace_ret_stack *ret_stack)
 {
+	atomic_set(&t->tracing_graph_pause, 0);
 	atomic_set(&t->trace_overrun, 0);
 	t->ftrace_timestamp = 0;
 	/* make curr_ret_stack visible before we add the ret_stack */

@@ -220,11 +220,7 @@ int irq_set_affinity_locked(struct irq_data *data, const struct cpumask *mask,
 
 	if (desc->affinity_notify) {
 		kref_get(&desc->affinity_notify->kref);
-		if (!schedule_work(&desc->affinity_notify->work)) {
-			/* Work was already scheduled, drop our extra ref */
-			kref_put(&desc->affinity_notify->kref,
-				 desc->affinity_notify->release);
-		}
+		schedule_work(&desc->affinity_notify->work);
 	}
 	irqd_set(data, IRQD_AFFINITY_SET);
 
@@ -323,13 +319,8 @@ irq_set_affinity_notifier(unsigned int irq, struct irq_affinity_notify *notify)
 	desc->affinity_notify = notify;
 	raw_spin_unlock_irqrestore(&desc->lock, flags);
 
-	if (old_notify) {
-		if (cancel_work_sync(&old_notify->work)) {
-			/* Pending work had a ref, put that one too */
-			kref_put(&old_notify->kref, old_notify->release);
-		}
+	if (old_notify)
 		kref_put(&old_notify->kref, old_notify->release);
-	}
 
 	return 0;
 }
@@ -872,15 +863,11 @@ irq_forced_thread_fn(struct irq_desc *desc, struct irqaction *action)
 	irqreturn_t ret;
 
 	local_bh_disable();
-	if (!IS_ENABLED(CONFIG_PREEMPT_RT_BASE))
-		local_irq_disable();
 	ret = action->thread_fn(action->irq, action->dev_id);
 	if (ret == IRQ_HANDLED)
 		atomic_inc(&desc->threads_handled);
 
 	irq_finalize_oneshot(desc, action);
-	if (!IS_ENABLED(CONFIG_PREEMPT_RT_BASE))
-		local_irq_enable();
 	local_bh_enable();
 	return ret;
 }
@@ -1340,6 +1327,9 @@ __setup_irq(unsigned int irq, struct irq_desc *desc, struct irqaction *new)
 			irq_settings_set_no_balancing(desc);
 			irqd_set(&desc->irq_data, IRQD_NO_BALANCING);
 		}
+
+		if (new->flags & IRQF_GIC_MULTI_TARGET)
+			irqd_set(&desc->irq_data, IRQD_GIC_MULTI_TARGET);
 
 		/* Set default affinity mask once everything is setup */
 		setup_affinity(desc, mask);
