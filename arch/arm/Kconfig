@@ -54,7 +54,6 @@ config ARM
 	select HAVE_FTRACE_MCOUNT_RECORD if (!XIP_KERNEL)
 	select HAVE_FUNCTION_GRAPH_TRACER if (!THUMB2_KERNEL)
 	select HAVE_FUNCTION_TRACER if (!XIP_KERNEL)
-	select HAVE_FUTEX_CMPXCHG if FUTEX
 	select HAVE_GENERIC_DMA_COHERENT
 	select HAVE_HW_BREAKPOINT if (PERF_EVENTS && (CPU_V6 || CPU_V6K || CPU_V7))
 	select HAVE_IDE if PCI || ISA || PCMCIA
@@ -688,9 +687,7 @@ config ARCH_S3C24XX
 	select HAVE_S3C_RTC if RTC_CLASS
 	select MULTI_IRQ_HANDLER
 	select NEED_MACH_IO_H
-	select S3C2410_WATCHDOG
 	select SAMSUNG_ATAGS
-	select WATCHDOG
 	help
 	  Samsung S3C2410, S3C2412, S3C2413, S3C2416, S3C2440, S3C2442, S3C2443
 	  and S3C2450 SoCs based systems, such as the Simtec Electronics BAST
@@ -1437,7 +1434,8 @@ config BIG_LITTLE
 
 config BL_SWITCHER
 	bool "big.LITTLE switcher support"
-	depends on BIG_LITTLE && MCPM && HOTPLUG_CPU && ARM_GIC
+	depends on BIG_LITTLE && MCPM && HOTPLUG_CPU
+	select ARM_CPU_SUSPEND
 	select CPU_PM
 	help
 	  The big.LITTLE "switcher" provides the core functionality to
@@ -2038,7 +2036,7 @@ config XIP_PHYS_ADDR
 config KEXEC
 	bool "Kexec system call (EXPERIMENTAL)"
 	depends on (!SMP || PM_SLEEP_SMP)
-	depends on MMU
+	depends on !CPU_V7M
 	select KEXEC_CORE
 	help
 	  kexec is a system call that implements the ability to shutdown your
@@ -2179,8 +2177,7 @@ config ARCH_SUSPEND_POSSIBLE
 	def_bool y
 
 config ARM_CPU_SUSPEND
-	def_bool PM_SLEEP || BL_SWITCHER
-	depends on ARCH_SUSPEND_POSSIBLE
+	def_bool PM_SLEEP
 
 config ARCH_HIBERNATION_POSSIBLE
 	bool

@@ -64,6 +64,18 @@
 	.endm
 
 /*
+ * Save/disable and restore interrupts.
+ */
+	.macro	save_and_disable_irqs, olddaif
+	mrs	\olddaif, daif
+	disable_irq
+	.endm
+
+	.macro	restore_irqs, olddaif
+	msr	daif, \olddaif
+	.endm
+
+/*
  * Enable and disable debug exceptions.
  */
 	.macro	disable_dbg
@@ -106,6 +118,24 @@
  */
 	.macro	smp_dmb, opt
 	dmb	\opt
+	.endm
+
+/*
+ * Value prediction barrier
+ */
+	.macro	csdb
+	hint	#20
+	.endm
+
+/*
+ * Sanitise a 64-bit bounded index wrt speculation, returning zero if out
+ * of bounds.
+ */
+	.macro	mask_nospec64, idx, limit, tmp
+	sub	\tmp, \idx, \limit
+	bic	\tmp, \tmp, \idx
+	and	\idx, \idx, \tmp, asr #63
+	csdb
 	.endm
 
 /*
@@ -177,25 +207,22 @@ lr	.req	x30		// link register
 
 /*
  * Pseudo-ops for PC-relative adr/ldr/str <reg>, <symbol> where
- * <symbol> is within the range +/- 4 GB of the PC when running
- * in core kernel context. In module context, a movz/movk sequence
- * is used, since modules may be loaded far away from the kernel
- * when KASLR is in effect.
+ * <symbol> is within the range +/- 4 GB of the PC.
  */
 	/*
 	 * @dst: destination register (64 bit wide)
 	 * @sym: name of the symbol
+	 * @tmp: optional scratch register to be used if <dst> == sp, which
+	 *       is not allowed in an adrp instruction
 	 */
-	.macro	adr_l, dst, sym
-#ifndef MODULE
+	.macro	adr_l, dst, sym, tmp=
+	.ifb	\tmp
 	adrp	\dst, \sym
 	add	\dst, \dst, :lo12:\sym
-#else
-	movz	\dst, #:abs_g3:\sym
-	movk	\dst, #:abs_g2_nc:\sym
-	movk	\dst, #:abs_g1_nc:\sym
-	movk	\dst, #:abs_g0_nc:\sym
-#endif
+	.else
+	adrp	\tmp, \sym
+	add	\dst, \tmp, :lo12:\sym
+	.endif
 	.endm
 
 	/*
@@ -206,7 +233,6 @@ lr	.req	x30		// link register
 	 *       the address
 	 */
 	.macro	ldr_l, dst, sym, tmp=
-#ifndef MODULE
 	.ifb	\tmp
 	adrp	\dst, \sym
 	ldr	\dst, [\dst, :lo12:\sym]
@@ -214,15 +240,6 @@ lr	.req	x30		// link register
 	adrp	\tmp, \sym
 	ldr	\dst, [\tmp, :lo12:\sym]
 	.endif
-#else
-	.ifb	\tmp
-	adr_l	\dst, \sym
-	ldr	\dst, [\dst]
-	.else
-	adr_l	\tmp, \sym
-	ldr	\dst, [\tmp]
-	.endif
-#endif
 	.endm
 
 	/*
@@ -232,13 +249,8 @@ lr	.req	x30		// link register
 	 *       while <src> needs to be preserved.
 	 */
 	.macro	str_l, src, sym, tmp
-#ifndef MODULE
 	adrp	\tmp, \sym
 	str	\src, [\tmp, :lo12:\sym]
-#else
-	adr_l	\tmp, \sym
-	str	\src, [\tmp]
-#endif
 	.endm
 
 	/*

@@ -22,7 +22,9 @@
 
 #include <linux/io.h>
 #include <asm/barrier.h>
-#include <asm/cp15.h>
+
+#define __ACCESS_CP15(CRn, Op1, CRm, Op2)	p15, Op1, %0, CRn, CRm, Op2
+#define __ACCESS_CP15_64(Op1, CRm)		p15, Op1, %Q0, %R0, CRm
 
 #define ICC_EOIR1			__ACCESS_CP15(c12, 0, c12, 1)
 #define ICC_DIR				__ACCESS_CP15(c12, 0, c11, 1)
@@ -100,55 +102,58 @@
 
 static inline void gic_write_eoir(u32 irq)
 {
-	write_sysreg(irq, ICC_EOIR1);
+	asm volatile("mcr " __stringify(ICC_EOIR1) : : "r" (irq));
 	isb();
 }
 
 static inline void gic_write_dir(u32 val)
 {
-	write_sysreg(val, ICC_DIR);
+	asm volatile("mcr " __stringify(ICC_DIR) : : "r" (val));
 	isb();
 }
 
 static inline u32 gic_read_iar(void)
 {
-	u32 irqstat = read_sysreg(ICC_IAR1);
+	u32 irqstat;
 
+	asm volatile("mrc " __stringify(ICC_IAR1) : "=r" (irqstat));
 	dsb(sy);
-
 	return irqstat;
 }
 
 static inline void gic_write_pmr(u32 val)
 {
-	write_sysreg(val, ICC_PMR);
+	asm volatile("mcr " __stringify(ICC_PMR) : : "r" (val));
 }
 
 static inline void gic_write_ctlr(u32 val)
 {
-	write_sysreg(val, ICC_CTLR);
+	asm volatile("mcr " __stringify(ICC_CTLR) : : "r" (val));
 	isb();
 }
 
 static inline void gic_write_grpen1(u32 val)
 {
-	write_sysreg(val, ICC_IGRPEN1);
+	asm volatile("mcr " __stringify(ICC_IGRPEN1) : : "r" (val));
 	isb();
 }
 
 static inline void gic_write_sgi1r(u64 val)
 {
-	write_sysreg(val, ICC_SGI1R);
+	asm volatile("mcrr " __stringify(ICC_SGI1R) : : "r" (val));
 }
 
 static inline u32 gic_read_sre(void)
 {
-	return read_sysreg(ICC_SRE);
+	u32 val;
+
+	asm volatile("mrc " __stringify(ICC_SRE) : "=r" (val));
+	return val;
 }
 
 static inline void gic_write_sre(u32 val)
 {
-	write_sysreg(val, ICC_SRE);
+	asm volatile("mcr " __stringify(ICC_SRE) : : "r" (val));
 	isb();
 }
 

@@ -401,7 +401,6 @@ static int opal_recover_mce(struct pt_regs *regs,
 
 	if (!(regs->msr & MSR_RI)) {
 		/* If MSR_RI isn't set, we cannot recover */
-		pr_err("Machine check interrupt unrecoverable: MSR(RI=0)\n");
 		recovered = 0;
 	} else if (evt->disposition == MCE_DISPOSITION_RECOVERED) {
 		/* Platform corrected itself */
@@ -581,10 +580,7 @@ static ssize_t symbol_map_read(struct file *fp, struct kobject *kobj,
 				       bin_attr->size);
 }
 
-static struct bin_attribute symbol_map_attr = {
-	.attr = {.name = "symbol_map", .mode = 0400},
-	.read = symbol_map_read
-};
+static BIN_ATTR_RO(symbol_map, 0);
 
 static void opal_export_symmap(void)
 {
@@ -601,10 +597,10 @@ static void opal_export_symmap(void)
 		return;
 
 	/* Setup attributes */
-	symbol_map_attr.private = __va(be64_to_cpu(syms[0]));
-	symbol_map_attr.size = be64_to_cpu(syms[1]);
+	bin_attr_symbol_map.private = __va(be64_to_cpu(syms[0]));
+	bin_attr_symbol_map.size = be64_to_cpu(syms[1]);
 
-	rc = sysfs_create_bin_file(opal_kobj, &symbol_map_attr);
+	rc = sysfs_create_bin_file(opal_kobj, &bin_attr_symbol_map);
 	if (rc)
 		pr_warn("Error %d creating OPAL symbols file\n", rc);
 }

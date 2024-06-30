@@ -191,6 +191,9 @@ void check_and_switch_context(struct mm_struct *mm, unsigned int cpu)
 	raw_spin_unlock_irqrestore(&cpu_asid_lock, flags);
 
 switch_mm_fastpath:
+
+	arm64_apply_bp_hardening();
+
 	/*
 	 * Defer TTBR0_EL1 setting for user threads to uaccess_enable() when
 	 * emulating PAN.
@@ -210,8 +213,7 @@ asmlinkage void post_ttbr_update_workaround(void)
 
 static int asids_init(void)
 {
-	int fld = cpuid_feature_extract_unsigned_field(read_cpuid(SYS_ID_AA64MMFR0_EL1),
-						       ID_AA64MMFR0_ASID_SHIFT);
+	int fld = cpuid_feature_extract_field(read_cpuid(SYS_ID_AA64MMFR0_EL1), 4);
 
 	switch (fld) {
 	default:

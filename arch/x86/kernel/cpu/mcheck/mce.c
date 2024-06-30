@@ -138,8 +138,6 @@ void mce_setup(struct mce *m)
 	m->socketid = cpu_data(m->extcpu).phys_proc_id;
 	m->apicid = cpu_data(m->extcpu).initial_apicid;
 	rdmsrl(MSR_IA32_MCG_CAP, m->mcgcap);
-
-	m->microcode = boot_cpu_data.microcode;
 }
 
 DEFINE_PER_CPU(struct mce, injectm);
@@ -260,7 +258,7 @@ static void print_mce(struct mce *m)
 	 */
 	pr_emerg(HW_ERR "PROCESSOR %u:%x TIME %llu SOCKET %u APIC %x microcode %x\n",
 		m->cpuvendor, m->cpuid, m->time, m->socketid, m->apicid,
-		m->microcode);
+		cpu_data(m->extcpu).microcode);
 
 	/*
 	 * Print out human-readable details about the MCE error,
@@ -1536,10 +1534,11 @@ static int __mcheck_cpu_apply_quirks(struct cpuinfo_x86 *c)
 			mce_flags.overflow_recov = 1;
 
 		/*
-		 * Turn off MC4_MISC thresholding banks on all models since
+		 * Turn off MC4_MISC thresholding banks on those models since
 		 * they're not supported there.
 		 */
-		if (c->x86 == 0x15) {
+		if (c->x86 == 0x15 &&
+		    (c->x86_model >= 0x10 && c->x86_model <= 0x1f)) {
 			int i;
 			u64 hwcr;
 			bool need_toggle;

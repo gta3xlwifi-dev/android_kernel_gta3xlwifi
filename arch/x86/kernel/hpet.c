@@ -774,6 +774,7 @@ static struct clocksource clocksource_hpet = {
 	.mask		= HPET_MASK,
 	.flags		= CLOCK_SOURCE_IS_CONTINUOUS,
 	.resume		= hpet_resume_counter,
+	.archdata	= { .vclock_mode = VCLOCK_HPET },
 };
 
 static int hpet_clocksource_register(void)
@@ -824,8 +825,6 @@ int __init hpet_enable(void)
 		return 0;
 
 	hpet_set_mapping();
-	if (!hpet_virt_address)
-		return 0;
 
 	/*
 	 * Read the period and check for a sane value:

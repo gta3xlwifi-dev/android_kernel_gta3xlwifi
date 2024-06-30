@@ -34,7 +34,7 @@
 /* Determine debug architecture. */
 u8 debug_monitors_arch(void)
 {
-	return cpuid_feature_extract_unsigned_field(read_system_reg(SYS_ID_AA64DFR0_EL1),
+	return cpuid_feature_extract_field(read_system_reg(SYS_ID_AA64DFR0_EL1),
 						ID_AA64DFR0_DEBUGVER_SHIFT);
 }
 
@@ -123,6 +123,28 @@ void disable_debug_monitors(enum dbg_active_el el)
 		mdscr_write(mdscr);
 	}
 }
+
+#ifdef CONFIG_SEC_KWATCHER
+/*
+ * restore mdscr register
+ */
+void restore_debug_monitors(void)
+{
+	u32 mdscr, enable = 0;
+
+	if (this_cpu_read(mde_ref_count) >= 1)
+		enable = DBG_MDSCR_MDE;
+
+	if (this_cpu_read(kde_ref_count) >= 1)
+		enable |= DBG_MDSCR_KDE;
+
+	if (enable && debug_enabled) {
+		mdscr = mdscr_read();
+		mdscr |= enable;
+		mdscr_write(mdscr);
+	}
+}
+#endif
 
 /*
  * OS lock clearing.
@@ -387,13 +409,13 @@ void user_rewind_single_step(struct task_struct *task)
 	 * If single step is active for this thread, then set SPSR.SS
 	 * to 1 to avoid returning to the active-pending state.
 	 */
-	if (test_tsk_thread_flag(task, TIF_SINGLESTEP))
+	if (test_ti_thread_flag(task_thread_info(task), TIF_SINGLESTEP))
 		set_regs_spsr_ss(task_pt_regs(task));
 }
 
 void user_fastforward_single_step(struct task_struct *task)
 {
-	if (test_tsk_thread_flag(task, TIF_SINGLESTEP))
+	if (test_ti_thread_flag(task_thread_info(task), TIF_SINGLESTEP))
 		clear_regs_spsr_ss(task_pt_regs(task));
 }
 

@@ -41,7 +41,6 @@
 #include <asm/x86_init.h>
 #include <asm/pgalloc.h>
 #include <linux/atomic.h>
-#include <asm/barrier.h>
 #include <asm/mpspec.h>
 #include <asm/i8259.h>
 #include <asm/proto.h>
@@ -172,7 +171,7 @@ int first_system_vector = FIRST_SYSTEM_VECTOR;
 /*
  * Debug level, exported for io_apic.c
  */
-int apic_verbosity;
+unsigned int apic_verbosity;
 
 int pic_mode;
 
@@ -465,9 +464,6 @@ static int lapic_next_deadline(unsigned long delta,
 {
 	u64 tsc;
 
-	/* This MSR is special and need a special fence: */
-	weak_wrmsr_fence();
-
 	tsc = rdtsc();
 	wrmsrl(MSR_IA32_TSC_DEADLINE, tsc + (((u64) delta) * TSC_DIVISOR));
 	return 0;
@@ -597,7 +593,7 @@ static __initdata unsigned long lapic_cal_pm1, lapic_cal_pm2;
 static __initdata unsigned long lapic_cal_j1, lapic_cal_j2;
 
 /*
- * Temporary interrupt handler and polled calibration function.
+ * Temporary interrupt handler.
  */
 static void __init lapic_cal_handler(struct clock_event_device *dev)
 {
@@ -681,8 +677,7 @@ calibrate_by_pmtimer(long deltapm, long *delta, long *deltatsc)
 static int __init calibrate_APIC_clock(void)
 {
 	struct clock_event_device *levt = this_cpu_ptr(&lapic_events);
-	u64 tsc_perj = 0, tsc_start = 0;
-	unsigned long jif_start;
+	void (*real_handler)(struct clock_event_device *dev);
 	unsigned long deltaj;
 	long delta, deltatsc;
 	int pm_referenced = 0;
@@ -711,12 +706,11 @@ static int __init calibrate_APIC_clock(void)
 	apic_printk(APIC_VERBOSE, "Using local APIC timer interrupts.\n"
 		    "calibrating APIC timer ...\n");
 
-	/*
-	 * There are platforms w/o global clockevent devices. Instead of
-	 * making the calibration conditional on that, use a polling based
-	 * approach everywhere.
-	 */
 	local_irq_disable();
+
+	/* Replace the global interrupt handler */
+	real_handler = global_clock_event->event_handler;
+	global_clock_event->event_handler = lapic_cal_handler;
 
 	/*
 	 * Setup the APIC counter to maximum. There is no way the lapic
@@ -724,51 +718,16 @@ static int __init calibrate_APIC_clock(void)
 	 */
 	__setup_APIC_LVTT(0xffffffff, 0, 0);
 
-	/*
-	 * Methods to terminate the calibration loop:
-	 *  1) Global clockevent if available (jiffies)
-	 *  2) TSC if available and frequency is known
-	 */
-	jif_start = READ_ONCE(jiffies);
-
-	if (tsc_khz) {
-		tsc_start = rdtsc();
-		tsc_perj = div_u64((u64)tsc_khz * 1000, HZ);
-	}
-
-	/*
-	 * Enable interrupts so the tick can fire, if a global
-	 * clockevent device is available
-	 */
+	/* Let the interrupts run */
 	local_irq_enable();
 
-	while (lapic_cal_loops <= LAPIC_CAL_LOOPS) {
-		/* Wait for a tick to elapse */
-		while (1) {
-			if (tsc_khz) {
-				u64 tsc_now = rdtsc();
-				if ((tsc_now - tsc_start) >= tsc_perj) {
-					tsc_start += tsc_perj;
-					break;
-				}
-			} else {
-				unsigned long jif_now = READ_ONCE(jiffies);
-
-				if (time_after(jif_now, jif_start)) {
-					jif_start = jif_now;
-					break;
-				}
-			}
-			cpu_relax();
-		}
-
-		/* Invoke the calibration routine */
-		local_irq_disable();
-		lapic_cal_handler(NULL);
-		local_irq_enable();
-	}
+	while (lapic_cal_loops <= LAPIC_CAL_LOOPS)
+		cpu_relax();
 
 	local_irq_disable();
+
+	/* Restore the real event handler */
+	global_clock_event->event_handler = real_handler;
 
 	/* Build delta t1-t2 as apic timer counts down */
 	delta = lapic_cal_t1 - lapic_cal_t2;
@@ -819,11 +778,10 @@ static int __init calibrate_APIC_clock(void)
 	levt->features &= ~CLOCK_EVT_FEAT_DUMMY;
 
 	/*
-	 * PM timer calibration failed or not turned on so lets try APIC
-	 * timer based calibration, if a global clockevent device is
-	 * available.
+	 * PM timer calibration failed or not turned on
+	 * so lets try APIC timer based calibration
 	 */
-	if (!pm_referenced && global_clock_event) {
+	if (!pm_referenced) {
 		apic_printk(APIC_VERBOSE, "... verify APIC timer\n");
 
 		/*
@@ -1269,14 +1227,6 @@ void setup_local_APIC(void)
 		return;
 	}
 
-	/*
-	 * If this comes from kexec/kcrash the APIC might be enabled in
-	 * SPIV. Soft disable it before doing further initialization.
-	 */
-	value = apic_read(APIC_SPIV);
-	value &= ~APIC_SPIV_APIC_ENABLED;
-	apic_write(APIC_SPIV, value);
-
 #ifdef CONFIG_X86_32
 	/* Pound the ESR really hard over the head with a big hammer - mbligh */
 	if (lapic_is_integrated() && apic->disable_esr) {
@@ -1302,21 +1252,16 @@ void setup_local_APIC(void)
 	apic->init_apic_ldr();
 
 #ifdef CONFIG_X86_32
-	if (apic->dest_logical) {
-		int logical_apicid, ldr_apicid;
-
-		/*
-		 * APIC LDR is initialized.  If logical_apicid mapping was
-		 * initialized during get_smp_config(), make sure it matches
-		 * the actual value.
-		 */
-		logical_apicid = early_per_cpu(x86_cpu_to_logical_apicid, cpu);
-		ldr_apicid = GET_APIC_LOGICAL_ID(apic_read(APIC_LDR));
-		if (logical_apicid != BAD_APICID)
-			WARN_ON(logical_apicid != ldr_apicid);
-		/* Always use the value from LDR. */
-		early_per_cpu(x86_cpu_to_logical_apicid, cpu) = ldr_apicid;
-	}
+	/*
+	 * APIC LDR is initialized.  If logical_apicid mapping was
+	 * initialized during get_smp_config(), make sure it matches the
+	 * actual value.
+	 */
+	i = early_per_cpu(x86_cpu_to_logical_apicid, cpu);
+	WARN_ON(i != BAD_APICID && i != logical_smp_processor_id());
+	/* always use the value from LDR */
+	early_per_cpu(x86_cpu_to_logical_apicid, cpu) =
+		logical_smp_processor_id();
 #endif
 
 	/*

@@ -68,12 +68,8 @@ static inline void invpcid_flush_all_nonglobals(void)
 struct tlb_state {
 	struct mm_struct *active_mm;
 	int state;
-
-	/* Last user mm for optimizing IBPB */
-	union {
-		struct mm_struct	*last_user_mm;
-		unsigned long		last_user_mm_ibpb;
-	};
+	/* last user mm's ctx id */
+	u64 last_ctx_id;
 
 	/*
 	 * Access to this CR4 shadow and to H/W CR4 is protected by
@@ -245,15 +241,12 @@ static inline void __native_flush_tlb_single(unsigned long addr)
 	 * ASID.  But, userspace flushes are probably much more
 	 * important performance-wise.
 	 *
-	 * In the KAISER disabled case, do an INVLPG to make sure
-	 * the mapping is flushed in case it is a global one.
+	 * Make sure to do only a single invpcid when KAISER is
+	 * disabled and we have only a single ASID.
 	 */
-	if (kaiser_enabled) {
+	if (kaiser_enabled)
 		invpcid_flush_one(X86_CR3_PCID_ASID_USER, addr);
-		invpcid_flush_one(X86_CR3_PCID_ASID_KERN, addr);
-	} else {
-		asm volatile("invlpg (%0)" ::"r" (addr) : "memory");
-	}
+	invpcid_flush_one(X86_CR3_PCID_ASID_KERN, addr);
 }
 
 static inline void __flush_tlb_all(void)

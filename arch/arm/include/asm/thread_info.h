@@ -124,10 +124,10 @@ extern void vfp_flush_hwstate(struct thread_info *);
 struct user_vfp;
 struct user_vfp_exc;
 
-extern int vfp_preserve_user_clear_hwstate(struct user_vfp *,
-					   struct user_vfp_exc *);
-extern int vfp_restore_user_hwstate(struct user_vfp *,
-				    struct user_vfp_exc *);
+extern int vfp_preserve_user_clear_hwstate(struct user_vfp __user *,
+					   struct user_vfp_exc __user *);
+extern int vfp_restore_user_hwstate(struct user_vfp __user *,
+				    struct user_vfp_exc __user *);
 #endif
 
 /*
@@ -148,6 +148,7 @@ extern int vfp_restore_user_hwstate(struct user_vfp *,
 #define TIF_USING_IWMMXT	17
 #define TIF_MEMDIE		18	/* is terminating due to OOM killer */
 #define TIF_RESTORE_SIGMASK	20
+#define TIF_MEMALLOC		29	/* allocating pages now */
 
 #define _TIF_SIGPENDING		(1 << TIF_SIGPENDING)
 #define _TIF_NEED_RESCHED	(1 << TIF_NEED_RESCHED)
