@@ -1600,6 +1600,14 @@ static struct sock *qtaguid_find_sk(const struct sk_buff *skb,
 		 * "struct inet_timewait_sock" which is missing fields.
 		 */
 		if (!sk_fullsock(sk) || sk->sk_state  == TCP_TIME_WAIT) {
+			if (sk->sk_state == TCP_NEW_SYN_RECV) {
+				struct request_sock *req = (struct request_sock *)sk;
+				if (req->rsk_listener) {
+					atomic_inc(&req->rsk_listener->sk_refcnt);
+					sock_gen_put(sk);
+					return req->rsk_listener;
+				}
+			}
 			sock_gen_put(sk);
 			sk = NULL;
 		}
@@ -2409,11 +2417,11 @@ int qtaguid_untag(struct socket *el_socket, bool kernel)
 			     "pid=%u tgid=%u sk_pid=%u, uid=%u\n", __func__,
 			     current->pid, current->tgid, sock_tag_entry->pid,
 			     from_kuid(&init_user_ns, current_fsuid()));
-	/*
-	 * This check is needed because tagging from a process that
-	 * didn’t open /dev/xt_qtaguid still adds the sock_tag_entry
-	 * to sock_tag_tree.
-	 */
+/*
+ * This check is needed because tagging from a process that
+ * didn't open /dev/xt_qtaguid still adds the sock_tag_entry
+ * to sock_tag_tree.
+*/
 	if (sock_tag_entry->list.next)
 		list_del(&sock_tag_entry->list);
 

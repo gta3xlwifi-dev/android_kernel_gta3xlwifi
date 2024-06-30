@@ -2849,14 +2849,12 @@ static int nf_tables_newset(struct net *net, struct sock *nlsk,
 
 	err = nft_trans_set_add(&ctx, NFT_MSG_NEWSET, set);
 	if (err < 0)
-		goto err3;
+		goto err2;
 
 	list_add_tail_rcu(&set->list, &table->sets);
 	table->use++;
 	return 0;
 
-err3:
-	ops->destroy(set);
 err2:
 	kfree(set);
 err1:

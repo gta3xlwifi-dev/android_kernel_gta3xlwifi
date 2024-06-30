@@ -266,7 +266,7 @@ void br_fdb_change_mac_address(struct net_bridge *br, const u8 *newaddr)
 
 	/* If old entry was unassociated with any port, then delete it. */
 	f = __br_fdb_get(br, br->dev->dev_addr, 0);
-	if (f && f->is_local && !f->dst && !f->added_by_user)
+	if (f && f->is_local && !f->dst)
 		fdb_delete_local(br, NULL, f);
 
 	fdb_insert(br, NULL, newaddr, 0);
@@ -281,7 +281,7 @@ void br_fdb_change_mac_address(struct net_bridge *br, const u8 *newaddr)
 		if (!br_vlan_should_use(v))
 			continue;
 		f = __br_fdb_get(br, br->dev->dev_addr, v->vid);
-		if (f && f->is_local && !f->dst && !f->added_by_user)
+		if (f && f->is_local && !f->dst)
 			fdb_delete_local(br, NULL, f);
 		fdb_insert(br, NULL, newaddr, v->vid);
 	}
@@ -758,24 +758,19 @@ out:
 }
 
 /* Update (create or replace) forwarding database entry */
-static int fdb_add_entry(struct net_bridge *br, struct net_bridge_port *source,
-			 const __u8 *addr, __u16 state, __u16 flags, __u16 vid)
+static int fdb_add_entry(struct net_bridge_port *source, const __u8 *addr,
+			 __u16 state, __u16 flags, __u16 vid)
 {
+	struct net_bridge *br = source->br;
 	struct hlist_head *head = &br->hash[br_mac_hash(addr, vid)];
 	struct net_bridge_fdb_entry *fdb;
 	bool modified = false;
 
 	/* If the port cannot learn allow only local and static entries */
-	if (source && !(state & NUD_PERMANENT) && !(state & NUD_NOARP) &&
+	if (!(state & NUD_PERMANENT) && !(state & NUD_NOARP) &&
 	    !(source->state == BR_STATE_LEARNING ||
 	      source->state == BR_STATE_FORWARDING))
 		return -EPERM;
-
-	if (!source && !(state & NUD_PERMANENT)) {
-		pr_info("bridge: RTM_NEWNEIGH %s without NUD_PERMANENT\n",
-			br->dev->name);
-		return -EINVAL;
-	}
 
 	fdb = fdb_find(head, addr, vid);
 	if (fdb == NULL) {
@@ -831,28 +826,22 @@ static int fdb_add_entry(struct net_bridge *br, struct net_bridge_port *source,
 	return 0;
 }
 
-static int __br_fdb_add(struct ndmsg *ndm, struct net_bridge *br,
-			struct net_bridge_port *p, const unsigned char *addr,
-			u16 nlh_flags, u16 vid)
+static int __br_fdb_add(struct ndmsg *ndm, struct net_bridge_port *p,
+	       const unsigned char *addr, u16 nlh_flags, u16 vid)
 {
 	int err = 0;
 
 	if (ndm->ndm_flags & NTF_USE) {
-		if (!p) {
-			pr_info("bridge: RTM_NEWNEIGH %s with NTF_USE is not supported\n",
-				br->dev->name);
-			return -EINVAL;
-		}
 		local_bh_disable();
 		rcu_read_lock();
-		br_fdb_update(br, p, addr, vid, true);
+		br_fdb_update(p->br, p, addr, vid, true);
 		rcu_read_unlock();
 		local_bh_enable();
 	} else {
-		spin_lock_bh(&br->hash_lock);
-		err = fdb_add_entry(br, p, addr, ndm->ndm_state,
+		spin_lock_bh(&p->br->hash_lock);
+		err = fdb_add_entry(p, addr, ndm->ndm_state,
 				    nlh_flags, vid);
-		spin_unlock_bh(&br->hash_lock);
+		spin_unlock_bh(&p->br->hash_lock);
 	}
 
 	return err;
@@ -889,7 +878,6 @@ int br_fdb_add(struct ndmsg *ndm, struct nlattr *tb[],
 				dev->name);
 			return -EINVAL;
 		}
-		br = p->br;
 		vg = nbp_vlan_group(p);
 	}
 
@@ -901,9 +889,15 @@ int br_fdb_add(struct ndmsg *ndm, struct nlattr *tb[],
 		}
 
 		/* VID was specified, so use it. */
-		err = __br_fdb_add(ndm, br, p, addr, nlh_flags, vid);
+		if (dev->priv_flags & IFF_EBRIDGE)
+			err = br_fdb_insert(br, NULL, addr, vid);
+		else
+			err = __br_fdb_add(ndm, p, addr, nlh_flags, vid);
 	} else {
-		err = __br_fdb_add(ndm, br, p, addr, nlh_flags, 0);
+		if (dev->priv_flags & IFF_EBRIDGE)
+			err = br_fdb_insert(br, NULL, addr, 0);
+		else
+			err = __br_fdb_add(ndm, p, addr, nlh_flags, 0);
 		if (err || !vg || !vg->num_vlans)
 			goto out;
 
@@ -914,7 +908,11 @@ int br_fdb_add(struct ndmsg *ndm, struct nlattr *tb[],
 		list_for_each_entry(v, &vg->vlan_list, vlist) {
 			if (!br_vlan_should_use(v))
 				continue;
-			err = __br_fdb_add(ndm, br, p, addr, nlh_flags, v->vid);
+			if (dev->priv_flags & IFF_EBRIDGE)
+				err = br_fdb_insert(br, NULL, addr, v->vid);
+			else
+				err = __br_fdb_add(ndm, p, addr, nlh_flags,
+						   v->vid);
 			if (err)
 				goto out;
 		}

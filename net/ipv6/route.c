@@ -336,9 +336,9 @@ static struct rt6_info *__ip6_dst_alloc(struct net *net,
 	return rt;
 }
 
-struct rt6_info *ip6_dst_alloc(struct net *net,
-			       struct net_device *dev,
-			       int flags)
+static struct rt6_info *ip6_dst_alloc(struct net *net,
+				      struct net_device *dev,
+				      int flags)
 {
 	struct rt6_info *rt = __ip6_dst_alloc(net, dev, flags);
 
@@ -362,7 +362,6 @@ struct rt6_info *ip6_dst_alloc(struct net *net,
 
 	return rt;
 }
-EXPORT_SYMBOL(ip6_dst_alloc);
 
 static void ip6_dst_destroy(struct dst_entry *dst)
 {
@@ -392,14 +391,11 @@ static void ip6_dst_ifdown(struct dst_entry *dst, struct net_device *dev,
 	struct net_device *loopback_dev =
 		dev_net(dev)->loopback_dev;
 
-	if (dev != loopback_dev) {
-		if (idev && idev->dev == dev) {
-			struct inet6_dev *loopback_idev =
-				in6_dev_get(loopback_dev);
-			if (loopback_idev) {
-				rt->rt6i_idev = loopback_idev;
-				in6_dev_put(idev);
-			}
+	if (idev && idev->dev != loopback_dev) {
+		struct inet6_dev *loopback_idev = in6_dev_get(loopback_dev);
+		if (loopback_idev) {
+			rt->rt6i_idev = loopback_idev;
+			in6_dev_put(idev);
 		}
 	}
 }
@@ -1794,7 +1790,6 @@ static struct rt6_info *ip6_nh_lookup_table(struct net *net,
 		ip6_rt_put(rt);
 		rt = NULL;
 	}
-
 	return rt;
 }
 
@@ -1990,7 +1985,7 @@ static struct rt6_info *ip6_route_info_create(struct fib6_config *cfg)
 
 			if (!grt)
 				grt = rt6_lookup(net, gw_addr, NULL,
-						 cfg->fc_ifindex, 1);
+					 cfg->fc_ifindex, 1);
 
 			err = -EHOSTUNREACH;
 			if (!grt)
@@ -2980,11 +2975,8 @@ static int ip6_route_multipath_add(struct fib6_config *cfg)
 		 * nexthops have been replaced by first new, the rest should
 		 * be added to it.
 		 */
-		if (cfg->fc_nlinfo.nlh) {
-			cfg->fc_nlinfo.nlh->nlmsg_flags &= ~(NLM_F_EXCL |
-							     NLM_F_REPLACE);
-			cfg->fc_nlinfo.nlh->nlmsg_flags |= NLM_F_CREATE;
-		}
+		cfg->fc_nlinfo.nlh->nlmsg_flags &= ~(NLM_F_EXCL |
+						     NLM_F_REPLACE);
 		nhn++;
 	}
 

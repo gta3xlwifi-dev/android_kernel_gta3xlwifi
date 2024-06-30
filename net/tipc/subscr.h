@@ -77,8 +77,7 @@ int tipc_subscrp_check_overlap(struct tipc_subscription *sub, u32 found_lower,
 void tipc_subscrp_report_overlap(struct tipc_subscription *sub,
 				 u32 found_lower, u32 found_upper, u32 event,
 				 u32 port_ref, u32 node, int must);
-
-int __net_init tipc_topsrv_init_net(struct net *net);
-void __net_exit tipc_topsrv_exit_net(struct net *net);
+int tipc_topsrv_start(struct net *net);
+void tipc_topsrv_stop(struct net *net);
 
 #endif

@@ -23,6 +23,9 @@
 #include <net/route.h>
 #include <net/tcp_states.h>
 #include <net/xfrm.h>
+#ifdef CONFIG_MPTCP
+#include <net/mptcp.h>
+#endif
 #include <net/tcp.h>
 
 #ifdef INET_CSK_DEBUG
@@ -86,31 +89,6 @@ int inet_csk_bind_conflict(const struct sock *sk,
 	return sk2 != NULL;
 }
 EXPORT_SYMBOL_GPL(inet_csk_bind_conflict);
-
-void inet_csk_update_fastreuse(struct inet_bind_bucket *tb,
-			       struct sock *sk)
-{
-	kuid_t uid = sock_i_uid(sk);
-
-	if (hlist_empty(&tb->owners)) {
-		if (sk->sk_reuse && sk->sk_state != TCP_LISTEN)
-			tb->fastreuse = 1;
-		else
-			tb->fastreuse = 0;
-		if (sk->sk_reuseport) {
-			tb->fastreuseport = 1;
-			tb->fastuid = uid;
-		} else
-			tb->fastreuseport = 0;
-	} else {
-		if (tb->fastreuse &&
-		    (!sk->sk_reuse || sk->sk_state == TCP_LISTEN))
-			tb->fastreuse = 0;
-		if (tb->fastreuseport &&
-		    (!sk->sk_reuseport || !uid_eq(tb->fastuid, uid)))
-			tb->fastreuseport = 0;
-	}
-}
 
 /* Obtain a reference to a local port for the given sock,
  * if snum is zero it means select any available local port.
@@ -241,9 +219,24 @@ tb_not_found:
 	if (!tb && (tb = inet_bind_bucket_create(hashinfo->bind_bucket_cachep,
 					net, head, snum)) == NULL)
 		goto fail_unlock;
-
-	inet_csk_update_fastreuse(tb, sk);
-
+	if (hlist_empty(&tb->owners)) {
+		if (sk->sk_reuse && sk->sk_state != TCP_LISTEN)
+			tb->fastreuse = 1;
+		else
+			tb->fastreuse = 0;
+		if (sk->sk_reuseport) {
+			tb->fastreuseport = 1;
+			tb->fastuid = uid;
+		} else
+			tb->fastreuseport = 0;
+	} else {
+		if (tb->fastreuse &&
+		    (!sk->sk_reuse || sk->sk_state == TCP_LISTEN))
+			tb->fastreuse = 0;
+		if (tb->fastreuseport &&
+		    (!sk->sk_reuseport || !uid_eq(tb->fastuid, uid)))
+			tb->fastreuseport = 0;
+	}
 success:
 	if (!inet_csk(sk)->icsk_bind_hash)
 		inet_bind_hash(sk, tb, snum);
@@ -571,8 +564,12 @@ static void reqsk_timer_handler(unsigned long data)
 	int qlen, expire = 0, resend = 0;
 	int max_retries, thresh;
 	u8 defer_accept;
-
+#ifdef CONFIG_MPTCP
+	if (sk_state_load(sk_listener) != TCP_LISTEN &&
+			!is_meta_sk(sk_listener))
+#else
 	if (sk_state_load(sk_listener) != TCP_LISTEN)
+#endif
 		goto drop;
 
 	max_retries = icsk->icsk_syn_retries ? : sysctl_tcp_synack_retries;
@@ -860,7 +857,16 @@ void inet_csk_listen_stop(struct sock *sk)
 	 */
 	while ((req = reqsk_queue_remove(queue, sk)) != NULL) {
 		struct sock *child = req->sk;
+#ifdef CONFIG_MPTCP
+		bool mutex_taken = false;
+#endif
 
+#ifdef CONFIG_MPTCP
+		if (is_meta_sk(child)) {
+			mutex_lock(&tcp_sk(child)->mpcb->mpcb_mutex);
+			mutex_taken = true;
+		}
+#endif
 		local_bh_disable();
 		bh_lock_sock(child);
 		WARN_ON(sock_owned_by_user(child));
@@ -870,6 +876,10 @@ void inet_csk_listen_stop(struct sock *sk)
 		reqsk_put(req);
 		bh_unlock_sock(child);
 		local_bh_enable();
+#ifdef CONFIG_MPTCP
+		if (mutex_taken)
+			mutex_unlock(&tcp_sk(child)->mpcb->mpcb_mutex);
+#endif
 		sock_put(child);
 
 		cond_resched();

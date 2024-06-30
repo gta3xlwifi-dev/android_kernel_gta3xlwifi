@@ -10,15 +10,23 @@
 #include <net/secure_seq.h>
 #include <linux/netfilter.h>
 
-static u32 __ipv6_select_ident(struct net *net,
+static u32 __ipv6_select_ident(struct net *net, u32 hashrnd,
 			       const struct in6_addr *dst,
 			       const struct in6_addr *src)
 {
-	u32 id;
+	u32 hash, id;
 
-	do {
-		id = prandom_u32();
-	} while (!id);
+	hash = __ipv6_addr_jhash(dst, hashrnd);
+	hash = __ipv6_addr_jhash(src, hash);
+	hash ^= net_hash_mix(net);
+
+	/* Treat id of 0 as unset and if we get 0 back from ip_idents_reserve,
+	 * set the hight order instead thus minimizing possible future
+	 * collisions.
+	 */
+	id = ip_idents_reserve(hash, 1);
+	if (unlikely(!id))
+		id = 1 << 31;
 
 	return id;
 }
@@ -33,6 +41,7 @@ static u32 __ipv6_select_ident(struct net *net,
  */
 void ipv6_proxy_select_ident(struct net *net, struct sk_buff *skb)
 {
+	static u32 ip6_proxy_idents_hashrnd __read_mostly;
 	struct in6_addr buf[2];
 	struct in6_addr *addrs;
 	u32 id;
@@ -44,7 +53,11 @@ void ipv6_proxy_select_ident(struct net *net, struct sk_buff *skb)
 	if (!addrs)
 		return;
 
-	id = __ipv6_select_ident(net, &addrs[1], &addrs[0]);
+	net_get_random_once(&ip6_proxy_idents_hashrnd,
+			    sizeof(ip6_proxy_idents_hashrnd));
+
+	id = __ipv6_select_ident(net, ip6_proxy_idents_hashrnd,
+				 &addrs[1], &addrs[0]);
 	skb_shinfo(skb)->ip6_frag_id = htonl(id);
 }
 EXPORT_SYMBOL_GPL(ipv6_proxy_select_ident);
@@ -53,9 +66,12 @@ __be32 ipv6_select_ident(struct net *net,
 			 const struct in6_addr *daddr,
 			 const struct in6_addr *saddr)
 {
+	static u32 ip6_idents_hashrnd __read_mostly;
 	u32 id;
 
-	id = __ipv6_select_ident(net, daddr, saddr);
+	net_get_random_once(&ip6_idents_hashrnd, sizeof(ip6_idents_hashrnd));
+
+	id = __ipv6_select_ident(net, ip6_idents_hashrnd, daddr, saddr);
 	return htonl(id);
 }
 EXPORT_SYMBOL(ipv6_select_ident);
@@ -70,6 +86,7 @@ int ip6_find_1stfragopt(struct sk_buff *skb, u8 **nexthdr)
 
 	while (offset <= packet_len) {
 		struct ipv6_opt_hdr *exthdr;
+		unsigned int len;
 
 		switch (**nexthdr) {
 
@@ -93,11 +110,10 @@ int ip6_find_1stfragopt(struct sk_buff *skb, u8 **nexthdr)
 		if (offset + sizeof(struct ipv6_opt_hdr) > packet_len)
 			return -EINVAL;
 
-		exthdr = (struct ipv6_opt_hdr *)(skb_network_header(skb) +
-						 offset);
-		offset += ipv6_optlen(exthdr);
-		if (offset > IPV6_MAXPLEN)
+		len = ipv6_optlen(exthdr);
+		if (len + offset >= IPV6_MAXPLEN)
 			return -EINVAL;
+		offset += len;
 		*nexthdr = &exthdr->nexthdr;
 	}
 
