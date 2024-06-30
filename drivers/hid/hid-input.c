@@ -93,6 +93,7 @@ static bool match_index(struct hid_usage *usage,
 
 typedef bool (*hid_usage_cmp_t)(struct hid_usage *usage,
 				unsigned int cur_idx, unsigned int val);
+extern bool lcd_is_on;
 
 static struct hid_usage *hidinput_find_key(struct hid_device *hid,
 					   hid_usage_cmp_t match,
@@ -303,7 +304,6 @@ static enum power_supply_property hidinput_battery_props[] = {
 
 #define HID_BATTERY_QUIRK_PERCENT	(1 << 0) /* always reports percent */
 #define HID_BATTERY_QUIRK_FEATURE	(1 << 1) /* ask for feature report */
-#define HID_BATTERY_QUIRK_IGNORE	(1 << 2) /* completely ignore the battery */
 
 static const struct hid_device_id hid_battery_quirks[] = {
 	{ HID_BLUETOOTH_DEVICE(USB_VENDOR_ID_APPLE,
@@ -321,9 +321,6 @@ static const struct hid_device_id hid_battery_quirks[] = {
 	{ HID_BLUETOOTH_DEVICE(USB_VENDOR_ID_APPLE,
 		USB_DEVICE_ID_APPLE_ALU_WIRELESS_ANSI),
 	  HID_BATTERY_QUIRK_PERCENT | HID_BATTERY_QUIRK_FEATURE },
-	{ HID_BLUETOOTH_DEVICE(USB_VENDOR_ID_ELECOM,
-		USB_DEVICE_ID_ELECOM_BM084),
-	  HID_BATTERY_QUIRK_IGNORE },
 	{}
 };
 
@@ -386,7 +383,7 @@ static int hidinput_get_battery_property(struct power_supply *psy,
 		break;
 
 	case POWER_SUPPLY_PROP_CAPACITY:
-		if (dev->battery_report_type == HID_FEATURE_REPORT) {
+        if (dev->battery_report_type == HID_FEATURE_REPORT) {
 			value = hidinput_query_battery_capacity(dev);
 			if (value < 0)
 				return value;
@@ -394,7 +391,7 @@ static int hidinput_get_battery_property(struct power_supply *psy,
 			value = dev->battery_capacity;
 		}
 
-		val->intval = value;
+        val->intval = value;
 		break;
 
 	case POWER_SUPPLY_PROP_MODEL_NAME:
@@ -741,7 +738,7 @@ static void hidinput_configure_usage(struct hid_input *hidinput, struct hid_fiel
 			default: map_key(BTN_TOOL_PEN); break;
 			}
 			break;
-
+			
 		case 0x3b: /* Battery Strength */
 			hidinput_setup_battery(device, HID_INPUT_REPORT, field);
 			usage->type = EV_PWR;
@@ -845,10 +842,6 @@ static void hidinput_configure_usage(struct hid_input *hidinput, struct hid_fiel
 		case 0x073: map_key_clear(KEY_BRIGHTNESS_MIN);		break;
 		case 0x074: map_key_clear(KEY_BRIGHTNESS_MAX);		break;
 		case 0x075: map_key_clear(KEY_BRIGHTNESS_AUTO);		break;
-
-		case 0x079: map_key_clear(KEY_KBDILLUMUP);	break;
-		case 0x07a: map_key_clear(KEY_KBDILLUMDOWN);	break;
-		case 0x07c: map_key_clear(KEY_KBDILLUMTOGGLE);	break;
 
 		case 0x082: map_key_clear(KEY_VIDEO_NEXT);	break;
 		case 0x083: map_key_clear(KEY_LAST);		break;
@@ -980,8 +973,6 @@ static void hidinput_configure_usage(struct hid_input *hidinput, struct hid_fiel
 		case 0x2cb: map_key_clear(KEY_KBDINPUTASSIST_ACCEPT);	break;
 		case 0x2cc: map_key_clear(KEY_KBDINPUTASSIST_CANCEL);	break;
 
-		case 0x29f: map_key_clear(KEY_SCALE);		break;
-
 		default: map_key_clear(KEY_UNKNOWN);
 		}
 		break;
@@ -1039,6 +1030,17 @@ static void hidinput_configure_usage(struct hid_input *hidinput, struct hid_fiel
 		default: goto ignore;
 		}
 		break;
+		
+#ifdef CONFIG_USB_HMT_SAMSUNG_INPUT
+	case HID_UP_HMTVENDOR:
+		switch (usage->hid & HID_USAGE) {
+		case 0x001: map_key_clear(KEY_START_NOTA_CMD);		break;
+		case 0x002: map_key_clear(KEY_START_TA_CMD);		break;
+		case 0x003: map_key_clear(KEY_ONGOING_TA_CMD);		break;
+		default: goto ignore;
+		}
+		break;
+#endif
 
 	default:
 	unknown:
@@ -1063,15 +1065,9 @@ mapped:
 	if (!bit)
 		return;
 
-	if (device->driver->input_mapped &&
-	    device->driver->input_mapped(device, hidinput, field, usage,
-					 &bit, &max) < 0) {
-		/*
-		 * The driver indicated that no further generic handling
-		 * of the usage is desired.
-		 */
-		return;
-	}
+	if (device->driver->input_mapped && device->driver->input_mapped(device,
+				hidinput, field, usage, &bit, &max) < 0)
+		goto ignore;
 
 	set_bit(usage->type, input->evbit);
 
@@ -1129,18 +1125,16 @@ mapped:
 		set_bit(MSC_SCAN, input->mscbit);
 	}
 
+ignore:
 	return;
 
-ignore:
-	usage->type = 0;
-	usage->code = 0;
 }
 
 void hidinput_hid_event(struct hid_device *hid, struct hid_field *field, struct hid_usage *usage, __s32 value)
 {
 	struct input_dev *input;
 	unsigned *quirks = &hid->quirks;
-
+	
 	if (!usage->type)
 		return;
 
@@ -1377,6 +1371,11 @@ static void hidinput_led_worker(struct work_struct *work)
 	buf = hid_alloc_report_buf(report, GFP_KERNEL);
 	if (!buf)
 		return;
+	if(!lcd_is_on){
+		dbg_hid("lcd is off, don't report LED event\n");
+		kfree(buf);
+		return;
+	}
 
 	hid_output_report(report, buf);
 	/* synchronous output report */
@@ -1673,4 +1672,3 @@ void hidinput_disconnect(struct hid_device *hid)
 	cancel_work_sync(&hid->led_work);
 }
 EXPORT_SYMBOL_GPL(hidinput_disconnect);
-

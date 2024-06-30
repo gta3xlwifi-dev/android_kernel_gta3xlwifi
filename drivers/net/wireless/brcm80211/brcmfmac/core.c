@@ -303,8 +303,14 @@ void brcmf_txflowblock(struct device *dev, bool state)
 
 void brcmf_netif_rx(struct brcmf_if *ifp, struct sk_buff *skb)
 {
+	skb->dev = ifp->ndev;
+	skb->protocol = eth_type_trans(skb, skb->dev);
+
 	if (skb->pkt_type == PACKET_MULTICAST)
 		ifp->stats.multicast++;
+
+	/* Process special event packets */
+	brcmf_fweh_process_skb(ifp->drvr, skb);
 
 	if (!(ifp->ndev->flags & IFF_UP)) {
 		brcmu_pkt_buf_free_skb(skb);
@@ -520,7 +526,7 @@ netif_rx:
 	}
 }
 
-void brcmf_rx_frame(struct device *dev, struct sk_buff *skb, bool handle_event)
+void brcmf_rx_frame(struct device *dev, struct sk_buff *skb)
 {
 	struct brcmf_if *ifp;
 	struct brcmf_bus *bus_if = dev_get_drvdata(dev);
@@ -540,44 +546,11 @@ void brcmf_rx_frame(struct device *dev, struct sk_buff *skb, bool handle_event)
 		return;
 	}
 
-	skb->protocol = eth_type_trans(skb, ifp->ndev);
-
 	rd = (struct brcmf_skb_reorder_data *)skb->cb;
-	if (rd->reorder) {
+	if (rd->reorder)
 		brcmf_rxreorder_process_info(ifp, rd->reorder, skb);
-	} else {
-		/* Process special event packets */
-		if (handle_event)
-			brcmf_fweh_process_skb(ifp->drvr, skb,
-					       BCMILCP_SUBTYPE_VENDOR_LONG);
-
+	else
 		brcmf_netif_rx(ifp, skb);
-	}
-}
-
-void brcmf_rx_event(struct device *dev, struct sk_buff *skb)
-{
-	struct brcmf_if *ifp;
-	struct brcmf_bus *bus_if = dev_get_drvdata(dev);
-	struct brcmf_pub *drvr = bus_if->drvr;
-	int ret;
-
-	brcmf_dbg(EVENT, "Enter: %s: rxp=%p\n", dev_name(dev), skb);
-
-	/* process and remove protocol-specific header */
-	ret = brcmf_proto_hdrpull(drvr, true, skb, &ifp);
-
-	if (ret || !ifp || !ifp->ndev) {
-		if (ret != -ENODATA && ifp)
-			ifp->stats.rx_errors++;
-		brcmu_pkt_buf_free_skb(skb);
-		return;
-	}
-
-	skb->protocol = eth_type_trans(skb, ifp->ndev);
-
-	brcmf_fweh_process_skb(ifp->drvr, skb, 0);
-	brcmu_pkt_buf_free_skb(skb);
 }
 
 void brcmf_txfinalize(struct brcmf_if *ifp, struct sk_buff *txp, bool success)

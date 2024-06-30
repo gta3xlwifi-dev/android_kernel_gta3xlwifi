@@ -1067,10 +1067,8 @@ static u32 bcm_sf2_sw_get_phy_flags(struct dsa_switch *ds, int port)
 	 * in bits 15:8 and the patch level in bits 7:0 which is exactly what
 	 * the REG_PHY_REVISION register layout is.
 	 */
-	if (priv->int_phy_mask & BIT(port))
-		return priv->hw_params.gphy_rev;
-	else
-		return 0;
+
+	return priv->hw_params.gphy_rev;
 }
 
 static int bcm_sf2_sw_indir_rw(struct dsa_switch *ds, int op, int addr,

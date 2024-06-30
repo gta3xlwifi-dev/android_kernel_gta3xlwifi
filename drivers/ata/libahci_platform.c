@@ -300,9 +300,6 @@ static int ahci_platform_get_phy(struct ahci_host_priv *hpriv, u32 port,
 		hpriv->phys[port] = NULL;
 		rc = 0;
 		break;
-	case -EPROBE_DEFER:
-		/* Do not complain yet */
-		break;
 
 	default:
 		dev_err(dev,
@@ -516,13 +513,11 @@ int ahci_platform_init_host(struct platform_device *pdev,
 	int i, irq, n_ports, rc;
 
 	irq = platform_get_irq(pdev, 0);
-	if (irq < 0) {
+	if (irq <= 0) {
 		if (irq != -EPROBE_DEFER)
 			dev_err(dev, "no irq\n");
 		return irq;
 	}
-	if (!irq)
-		return -EINVAL;
 
 	hpriv->irq = irq;
 

@@ -1057,18 +1057,18 @@ static int set_machine_constraints(struct regulator_dev *rdev,
 
 	ret = machine_constraints_voltage(rdev, rdev->constraints);
 	if (ret != 0)
-		return ret;
+		goto out;
 
 	ret = machine_constraints_current(rdev, rdev->constraints);
 	if (ret != 0)
-		return ret;
+		goto out;
 
 	if (rdev->constraints->ilim_uA && ops->set_input_current_limit) {
 		ret = ops->set_input_current_limit(rdev,
 						   rdev->constraints->ilim_uA);
 		if (ret < 0) {
 			rdev_err(rdev, "failed to set input limit\n");
-			return ret;
+			goto out;
 		}
 	}
 
@@ -1077,20 +1077,21 @@ static int set_machine_constraints(struct regulator_dev *rdev,
 		ret = suspend_prepare(rdev, rdev->constraints->initial_state);
 		if (ret < 0) {
 			rdev_err(rdev, "failed to set suspend state\n");
-			return ret;
+			goto out;
 		}
 	}
 
 	if (rdev->constraints->initial_mode) {
 		if (!ops->set_mode) {
 			rdev_err(rdev, "no set_mode operation\n");
-			return -EINVAL;
+			ret = -EINVAL;
+			goto out;
 		}
 
 		ret = ops->set_mode(rdev, rdev->constraints->initial_mode);
 		if (ret < 0) {
 			rdev_err(rdev, "failed to set initial mode: %d\n", ret);
-			return ret;
+			goto out;
 		}
 	}
 
@@ -1101,7 +1102,7 @@ static int set_machine_constraints(struct regulator_dev *rdev,
 		ret = _regulator_do_enable(rdev);
 		if (ret < 0 && ret != -EINVAL) {
 			rdev_err(rdev, "failed to enable\n");
-			return ret;
+			goto out;
 		}
 	}
 
@@ -1110,7 +1111,7 @@ static int set_machine_constraints(struct regulator_dev *rdev,
 		ret = ops->set_ramp_delay(rdev, rdev->constraints->ramp_delay);
 		if (ret < 0) {
 			rdev_err(rdev, "failed to set ramp_delay\n");
-			return ret;
+			goto out;
 		}
 	}
 
@@ -1118,7 +1119,7 @@ static int set_machine_constraints(struct regulator_dev *rdev,
 		ret = ops->set_pull_down(rdev);
 		if (ret < 0) {
 			rdev_err(rdev, "failed to set pull down\n");
-			return ret;
+			goto out;
 		}
 	}
 
@@ -1126,7 +1127,7 @@ static int set_machine_constraints(struct regulator_dev *rdev,
 		ret = ops->set_soft_start(rdev);
 		if (ret < 0) {
 			rdev_err(rdev, "failed to set soft start\n");
-			return ret;
+			goto out;
 		}
 	}
 
@@ -1135,12 +1136,16 @@ static int set_machine_constraints(struct regulator_dev *rdev,
 		ret = ops->set_over_current_protection(rdev);
 		if (ret < 0) {
 			rdev_err(rdev, "failed to set over current protection\n");
-			return ret;
+			goto out;
 		}
 	}
 
 	print_constraints(rdev);
 	return 0;
+out:
+	kfree(rdev->constraints);
+	rdev->constraints = NULL;
+	return ret;
 }
 
 /**
@@ -1388,6 +1393,13 @@ static struct regulator_dev *regulator_lookup_by_name(const char *name)
 	dev = class_find_device(&regulator_class, NULL, name, regulator_match);
 
 	return dev ? dev_to_rdev(dev) : NULL;
+}
+
+static int _regulator_get_disable_time(struct regulator_dev *rdev)
+{
+	if (!rdev->desc->ops->disable_time)
+		return rdev->desc->disable_time;
+	return rdev->desc->ops->disable_time(rdev);
 }
 
 /**
@@ -2155,7 +2167,16 @@ EXPORT_SYMBOL_GPL(regulator_enable);
 
 static int _regulator_do_disable(struct regulator_dev *rdev)
 {
-	int ret;
+	int ret, delay;
+
+	/* Query before disabling in case configuration dependent.  */
+	ret = _regulator_get_disable_time(rdev);
+	if (ret >= 0) {
+		delay = ret;
+	} else {
+		rdev_warn(rdev, "disable_time() failed: %d\n", ret);
+		delay = 0;
+	}
 
 	trace_regulator_disable(rdev_get_name(rdev));
 
@@ -2178,6 +2199,18 @@ static int _regulator_do_disable(struct regulator_dev *rdev)
 	 */
 	if (rdev->desc->off_on_delay)
 		rdev->last_off_jiffy = jiffies;
+
+	/* Allow the regulator to ramp; it would be useful to extend
+	 * this for bulk operations so that the regulators can ramp
+	 * together.  */
+	trace_regulator_disable_delay(rdev_get_name(rdev));
+
+	if (delay >= 1000) {
+		mdelay(delay / 1000);
+		udelay(delay % 1000);
+	} else if (delay) {
+		udelay(delay);
+	}
 
 	trace_regulator_disable_complete(rdev_get_name(rdev));
 
@@ -3978,7 +4011,7 @@ unset_supplies:
 
 scrub:
 	regulator_ena_gpio_free(rdev);
-
+	kfree(rdev->constraints);
 wash:
 	device_unregister(&rdev->dev);
 	/* device core frees rdev */
@@ -4019,6 +4052,109 @@ void regulator_unregister(struct regulator_dev *rdev)
 	device_unregister(&rdev->dev);
 }
 EXPORT_SYMBOL_GPL(regulator_unregister);
+
+#ifdef CONFIG_SEC_PM_DEBUG
+struct rdev_check_data {
+	struct regulator_dev *parent;
+	int level;
+};
+
+static void regulator_show_enabled_subtree(struct regulator_dev *rdev,
+					int level);
+
+static int regulator_show_enabled_children(struct device *dev, void *data)
+{
+	struct regulator_dev *rdev = dev_to_rdev(dev);
+	struct rdev_check_data *check_data = data;
+
+	if (rdev->supply && rdev->supply->rdev == check_data->parent)
+		regulator_show_enabled_subtree(rdev, check_data->level + 1);
+
+	return 0;
+}
+
+static void regulator_show_enabled_subtree(struct regulator_dev *rdev,
+					int level)
+{
+	struct regulation_constraints *c;
+	struct rdev_check_data check_data;
+
+	if (!rdev)
+		return;
+
+	if (rdev->use_count <= 0)
+		goto out;
+
+	pr_cont("%*s%-*s %3d %4d ",
+		   level * 3 + 1, "",
+		   30 - level * 3, rdev_get_name(rdev),
+		   rdev->use_count, rdev->constraints->initial_mode);
+
+	c = rdev->constraints;
+	if (c) {
+		switch (rdev->desc->type) {
+		case REGULATOR_VOLTAGE:
+			pr_cont("%5dmV %5dmV\n",
+				   c->min_uV / 1000, c->max_uV / 1000);
+			break;
+		case REGULATOR_CURRENT:
+			pr_cont("%5dmA %5dmA\n",
+				   c->min_uA / 1000, c->max_uA / 1000);
+			break;
+		}
+	}
+#if 0
+	struct regulator *consumer;
+
+	list_for_each_entry(consumer, &rdev->consumer_list, list) {
+		if (consumer->dev && consumer->dev->class == &regulator_class)
+			continue;
+
+		pr_cont("%*s%-*s ",
+			   (level + 1) * 3 + 1, "",
+			   30 - (level + 1) * 3,
+			   consumer->dev ? dev_name(consumer->dev) : "deviceless");
+
+		switch (rdev->desc->type) {
+		case REGULATOR_VOLTAGE:
+			pr_cont("%14dmV %5dmV\n",
+				   consumer->voltage[PM_SUSPEND_ON].min_uV / 1000,
+				   consumer->voltage[PM_SUSPEND_ON].max_uV / 1000);
+			break;
+		case REGULATOR_CURRENT:
+			pr_cont("\n");
+			break;
+		}
+	}
+#endif
+out:
+	check_data.level = level;
+	check_data.parent = rdev;
+
+	class_for_each_device(&regulator_class, NULL, &check_data,
+			      regulator_show_enabled_children);
+}
+
+static int _regulator_show_enabled(struct device *dev, void *data)
+{
+	struct regulator_dev *rdev = dev_to_rdev(dev);
+
+	if (!rdev->supply)
+		regulator_show_enabled_subtree(rdev, 0);
+
+	return 0;
+}
+
+int regulator_show_enabled(void)
+{
+	pr_info(" regulator                      use mode     min     max\n");
+	pr_info("--------------------------------------------------------\n");
+
+	return class_for_each_device(&regulator_class, NULL, NULL,
+				     _regulator_show_enabled);
+}
+EXPORT_SYMBOL_GPL(regulator_show_enabled);
+#endif /* CONFIG_SEC_PM_DEBUG */
 
 static int _regulator_suspend_prepare(struct device *dev, void *data)
 {

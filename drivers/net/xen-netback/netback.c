@@ -189,15 +189,11 @@ void xenvif_rx_queue_tail(struct xenvif_queue *queue, struct sk_buff *skb)
 
 	spin_lock_irqsave(&queue->rx_queue.lock, flags);
 
-	if (queue->rx_queue_len >= queue->rx_queue_max) {
-		netif_tx_stop_queue(netdev_get_tx_queue(queue->vif->dev, queue->id));
-		kfree_skb(skb);
-		queue->vif->dev->stats.rx_dropped++;
-	} else {
-		__skb_queue_tail(&queue->rx_queue, skb);
+	__skb_queue_tail(&queue->rx_queue, skb);
 
-		queue->rx_queue_len += skb->len;
-	}
+	queue->rx_queue_len += skb->len;
+	if (queue->rx_queue_len > queue->rx_queue_max)
+		netif_tx_stop_queue(netdev_get_tx_queue(queue->vif->dev, queue->id));
 
 	spin_unlock_irqrestore(&queue->rx_queue.lock, flags);
 }
@@ -247,7 +243,6 @@ static void xenvif_rx_queue_drop_expired(struct xenvif_queue *queue)
 			break;
 		xenvif_rx_dequeue(queue);
 		kfree_skb(skb);
-		queue->vif->dev->stats.rx_dropped++;
 	}
 }
 
@@ -675,10 +670,6 @@ void xenvif_napi_schedule_or_enable_events(struct xenvif_queue *queue)
 
 	if (more_to_do)
 		napi_schedule(&queue->napi);
-	else if (xenvif_atomic_fetch_andnot(NETBK_TX_EOI | NETBK_COMMON_EOI,
-				     &queue->eoi_pending) &
-		 (NETBK_TX_EOI | NETBK_COMMON_EOI))
-		xen_irq_lateeoi(queue->tx_irq, 0);
 }
 
 static void tx_add_credit(struct xenvif_queue *queue)
@@ -999,7 +990,7 @@ check_frags:
 				 * the header's copy failed, and they are
 				 * sharing a slot, send an error
 				 */
-				if (i == 0 && !first_shinfo && sharedslot)
+				if (i == 0 && sharedslot)
 					xenvif_idx_release(queue, pending_idx,
 							   XEN_NETIF_RSP_ERROR);
 				else
@@ -1430,7 +1421,6 @@ static void xenvif_tx_build_gops(struct xenvif_queue *queue,
 			skb_shinfo(skb)->nr_frags = MAX_SKB_FRAGS;
 			nskb = xenvif_alloc_skb(0);
 			if (unlikely(nskb == NULL)) {
-				skb_shinfo(skb)->nr_frags = 0;
 				kfree_skb(skb);
 				xenvif_tx_err(queue, &txreq, idx);
 				if (net_ratelimit())
@@ -1446,7 +1436,6 @@ static void xenvif_tx_build_gops(struct xenvif_queue *queue,
 
 			if (xenvif_set_skb_gso(queue->vif, skb, gso)) {
 				/* Failure in xenvif_set_skb_gso is fatal. */
-				skb_shinfo(skb)->nr_frags = 0;
 				kfree_skb(skb);
 				kfree_skb(nskb);
 				break;
@@ -1802,15 +1791,7 @@ int xenvif_tx_action(struct xenvif_queue *queue, int budget)
 				      NULL,
 				      queue->pages_to_map,
 				      nr_mops);
-		if (ret) {
-			unsigned int i;
-
-			netdev_err(queue->vif->dev, "Map fail: nr %u ret %d\n",
-				   nr_mops, ret);
-			for (i = 0; i < nr_mops; ++i)
-				WARN_ON_ONCE(queue->tx_map_ops[i].status ==
-				             GNTST_okay);
-		}
+		BUG_ON(ret);
 	}
 
 	work_done = xenvif_tx_submit(queue);
@@ -2027,14 +2008,14 @@ static bool xenvif_rx_queue_ready(struct xenvif_queue *queue)
 	return queue->stalled && prod - cons >= 1;
 }
 
-bool xenvif_have_rx_work(struct xenvif_queue *queue, bool test_kthread)
+static bool xenvif_have_rx_work(struct xenvif_queue *queue)
 {
 	return (!skb_queue_empty(&queue->rx_queue)
 		&& xenvif_rx_ring_slots_available(queue))
 		|| (queue->vif->stall_timeout &&
 		    (xenvif_rx_queue_stalled(queue)
 		     || xenvif_rx_queue_ready(queue)))
-		|| (test_kthread && kthread_should_stop())
+		|| kthread_should_stop()
 		|| queue->vif->disabled;
 }
 
@@ -2065,20 +2046,15 @@ static void xenvif_wait_for_rx_work(struct xenvif_queue *queue)
 {
 	DEFINE_WAIT(wait);
 
-	if (xenvif_have_rx_work(queue, true))
+	if (xenvif_have_rx_work(queue))
 		return;
 
 	for (;;) {
 		long ret;
 
 		prepare_to_wait(&queue->wq, &wait, TASK_INTERRUPTIBLE);
-		if (xenvif_have_rx_work(queue, true))
+		if (xenvif_have_rx_work(queue))
 			break;
-		if (xenvif_atomic_fetch_andnot(NETBK_RX_EOI | NETBK_COMMON_EOI,
-					&queue->eoi_pending) &
-		    (NETBK_RX_EOI | NETBK_COMMON_EOI))
-			xen_irq_lateeoi(queue->rx_irq, 0);
-
 		ret = schedule_timeout(xenvif_rx_queue_timeout(queue));
 		if (!ret)
 			break;

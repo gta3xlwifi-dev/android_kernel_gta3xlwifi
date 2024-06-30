@@ -364,8 +364,6 @@ static void mmp_tdma_free_descriptor(struct mmp_tdma_chan *tdmac)
 		gen_pool_free(gpool, (unsigned long)tdmac->desc_arr,
 				size);
 	tdmac->desc_arr = NULL;
-	if (tdmac->status == DMA_ERROR)
-		tdmac->status = DMA_COMPLETE;
 
 	return;
 }
@@ -423,7 +421,7 @@ struct mmp_tdma_desc *mmp_tdma_alloc_descriptor(struct mmp_tdma_chan *tdmac)
 static struct dma_async_tx_descriptor *mmp_tdma_prep_dma_cyclic(
 		struct dma_chan *chan, dma_addr_t dma_addr, size_t buf_len,
 		size_t period_len, enum dma_transfer_direction direction,
-		unsigned long flags)
+		unsigned long flags, void *context)
 {
 	struct mmp_tdma_chan *tdmac = to_mmp_tdma_chan(chan);
 	struct mmp_tdma_desc *desc;

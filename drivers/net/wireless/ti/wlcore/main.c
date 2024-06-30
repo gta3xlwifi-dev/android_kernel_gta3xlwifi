@@ -1123,11 +1123,8 @@ static int wl12xx_chip_wakeup(struct wl1271 *wl, bool plt)
 		goto out;
 
 	ret = wl12xx_fetch_firmware(wl, plt);
-	if (ret < 0) {
-		kfree(wl->fw_status);
-		kfree(wl->raw_fw_status);
-		kfree(wl->tx_res_if);
-	}
+	if (ret < 0)
+		goto out;
 
 out:
 	return ret;
@@ -2889,8 +2886,21 @@ static int wlcore_join(struct wl1271 *wl, struct wl12xx_vif *wlvif)
 
 	if (is_ibss)
 		ret = wl12xx_cmd_role_start_ibss(wl, wlvif);
-	else
+	else {
+		if (wl->quirks & WLCORE_QUIRK_START_STA_FAILS) {
+			/*
+			 * TODO: this is an ugly workaround for wl12xx fw
+			 * bug - we are not able to tx/rx after the first
+			 * start_sta, so make dummy start+stop calls,
+			 * and then call start_sta again.
+			 * this should be fixed in the fw.
+			 */
+			wl12xx_cmd_role_start_sta(wl, wlvif);
+			wl12xx_cmd_role_stop_sta(wl, wlvif);
+		}
+
 		ret = wl12xx_cmd_role_start_sta(wl, wlvif);
+	}
 
 	return ret;
 }

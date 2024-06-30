@@ -579,7 +579,6 @@ config GPIO_ADP5588
 config GPIO_ADP5588_IRQ
 	bool "Interrupt controller support for ADP5588"
 	depends on GPIO_ADP5588=y
-	select GPIOLIB_IRQCHIP
 	help
 	  Say yes here to enable the adp5588 to be used as an interrupt
 	  controller. It requires the driver to be built in the kernel.
@@ -1040,5 +1039,12 @@ config GPIO_VIPERBOARD
           of the module parameters.
 
 endmenu
+
+config SEC_CONNECTOR_DETECTOR
+	tristate "Setting Samsung Connector Detector feature"
+	depends on SEC_FACTORY
+	help
+	  To detect connection of connector, set this feature.
+	  This feature should be enabled for factory mode.
 
 endif

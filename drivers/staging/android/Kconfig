@@ -75,6 +75,34 @@ config SW_SYNC_USER
 	  *WARNING* improper use of this can result in deadlocking kernel
 	  drivers from userspace.
 
+config ANDROID_INTF_ALARM_DEV
+	tristate "Android alarm driver"
+	depends on RTC_CLASS
+	default n
+	---help---
+	  Provides non-wakeup and rtc backed wakeup alarms based on rtc or
+	  elapsed realtime, and a non-wakeup alarm on the monotonic clock.
+	  Also exports the alarm interface to user-space.
+	  
+config SAMSUNG_FREECESS
+	bool "thraw frozen process when recv sig"
+	default n
+	help
+	  thraw frozen process when recv sig.
+	  
+config LMK_SKIP_KILL
+	bool "skip kill chrome & sbrowser from lmk driver"
+	default n
+	help
+		this config is skip kill chrome and sbrowser at adj 200 in lmk driver. Also, this config is only enable on T515 model.
+		please don't enable this config on other models.
+
+config SAMSUNG_LMKD_DEBUG
+	bool "record lmkd kill history"
+	default y
+	help
+	  record lmkd kill history
+
 config ANDROID_VSOC
 	tristate "Android Virtual SoC support"
 	default n
@@ -84,7 +112,14 @@ config ANDROID_VSOC
 	  a 'cuttlefish' Android image inside QEmu. The driver interacts with
 	  a QEmu ivshmem device. If built as a module, it will be called vsoc.
 
+config SAMSUNG_FREECESS
+	bool "thraw frozen process when recv sig"
+	default n
+	help
+	  thraw frozen process when recv sig.
+
 source "drivers/staging/android/ion/Kconfig"
+
 
 endif # if ANDROID
 

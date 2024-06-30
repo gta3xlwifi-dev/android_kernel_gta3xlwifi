@@ -1598,9 +1598,6 @@ static void iommu_disable_protect_mem_regions(struct intel_iommu *iommu)
 	u32 pmen;
 	unsigned long flags;
 
-	if (!cap_plmr(iommu->cap) && !cap_phmr(iommu->cap))
-		return;
-
 	raw_spin_lock_irqsave(&iommu->register_lock, flags);
 	pmen = readl(iommu->reg + DMAR_PMEN_REG);
 	pmen &= ~DMA_PMEN_EPM;
@@ -3259,11 +3256,8 @@ static int __init init_dmars(void)
 		iommu_identity_mapping |= IDENTMAP_ALL;
 
 #ifdef CONFIG_INTEL_IOMMU_BROKEN_GFX_WA
-	dmar_map_gfx = 0;
+	iommu_identity_mapping |= IDENTMAP_GFX;
 #endif
-
-	if (!dmar_map_gfx)
-		iommu_identity_mapping |= IDENTMAP_GFX;
 
 	check_tylersburg_isoch();
 
@@ -3949,11 +3943,10 @@ static void quirk_ioat_snb_local_iommu(struct pci_dev *pdev)
 
 	/* we know that the this iommu should be at offset 0xa000 from vtbar */
 	drhd = dmar_find_matched_drhd_unit(pdev);
-	if (!drhd || drhd->reg_base_addr - vtbar != 0xa000) {
-		pr_warn_once(FW_BUG "BIOS assigned incorrect VT-d unit for Intel(R) QuickData Technology device\n");
-		add_taint(TAINT_FIRMWARE_WORKAROUND, LOCKDEP_STILL_OK);
+	if (WARN_TAINT_ONCE(!drhd || drhd->reg_base_addr - vtbar != 0xa000,
+			    TAINT_FIRMWARE_WORKAROUND,
+			    "BIOS assigned incorrect VT-d unit for Intel(R) QuickData Technology device\n"))
 		pdev->dev.archdata.iommu = DUMMY_DEVICE_DOMAIN_INFO;
-	}
 }
 DECLARE_PCI_FIXUP_ENABLE(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_IOAT_SNB, quirk_ioat_snb_local_iommu);
 
@@ -3987,7 +3980,9 @@ static void __init init_no_remapping_devices(void)
 
 		/* This IOMMU has *only* gfx devices. Either bypass it or
 		   set the gfx_mapped flag, as appropriate */
-		if (!dmar_map_gfx) {
+		if (dmar_map_gfx) {
+			intel_iommu_gfx_mapped = 1;
+		} else {
 			drhd->ignored = 1;
 			for_each_active_dev_scope(drhd->devices,
 						  drhd->devices_cnt, i, dev)
@@ -4696,9 +4691,6 @@ int __init intel_iommu_init(void)
 		goto out_free_reserved_range;
 	}
 
-	if (dmar_map_gfx)
-		intel_iommu_gfx_mapped = 1;
-
 	init_no_remapping_devices();
 
 	ret = init_dmars();
@@ -5017,10 +5009,8 @@ static phys_addr_t intel_iommu_iova_to_phys(struct iommu_domain *domain,
 	u64 phys = 0;
 
 	pte = pfn_to_dma_pte(dmar_domain, iova >> VTD_PAGE_SHIFT, &level);
-	if (pte && dma_pte_present(pte))
-		phys = dma_pte_addr(pte) +
-			(iova & (BIT_MASK(level_to_offset_bits(level) +
-						VTD_PAGE_SHIFT) - 1));
+	if (pte)
+		phys = dma_pte_addr(pte);
 
 	return phys;
 }

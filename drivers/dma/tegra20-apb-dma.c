@@ -285,7 +285,7 @@ static struct tegra_dma_desc *tegra_dma_desc_get(
 
 	/* Do not allocate if desc are waiting for ack */
 	list_for_each_entry(dma_desc, &tdc->free_dma_desc, node) {
-		if (async_tx_test_ack(&dma_desc->txd) && !dma_desc->cb_count) {
+		if (async_tx_test_ack(&dma_desc->txd)) {
 			list_del(&dma_desc->node);
 			spin_unlock_irqrestore(&tdc->lock, flags);
 			dma_desc->txd.flags = 0;
@@ -632,10 +632,7 @@ static void handle_cont_sngl_cycle_dma_done(struct tegra_dma_channel *tdc,
 
 	sgreq = list_first_entry(&tdc->pending_sg_req, typeof(*sgreq), node);
 	dma_desc = sgreq->dma_desc;
-	/* if we dma for long enough the transfer count will wrap */
-	dma_desc->bytes_transferred =
-		(dma_desc->bytes_transferred + sgreq->req_len) %
-		dma_desc->bytes_requested;
+	dma_desc->bytes_transferred += sgreq->req_len;
 
 	/* Callback need to be call */
 	if (!dma_desc->cb_count)
@@ -754,6 +751,10 @@ static int tegra_dma_terminate_all(struct dma_chan *dc)
 	bool was_busy;
 
 	spin_lock_irqsave(&tdc->lock, flags);
+	if (list_empty(&tdc->pending_sg_req)) {
+		spin_unlock_irqrestore(&tdc->lock, flags);
+		return 0;
+	}
 
 	if (!tdc->busy)
 		goto skip_dma_stop;
@@ -1051,7 +1052,7 @@ static struct dma_async_tx_descriptor *tegra_dma_prep_slave_sg(
 static struct dma_async_tx_descriptor *tegra_dma_prep_dma_cyclic(
 	struct dma_chan *dc, dma_addr_t buf_addr, size_t buf_len,
 	size_t period_len, enum dma_transfer_direction direction,
-	unsigned long flags)
+	unsigned long flags, void *context)
 {
 	struct tegra_dma_channel *tdc = to_tegra_dma_chan(dc);
 	struct tegra_dma_desc *dma_desc = NULL;
@@ -1207,7 +1208,8 @@ static void tegra_dma_free_chan_resources(struct dma_chan *dc)
 
 	dev_dbg(tdc2dev(tdc), "Freeing channel %d\n", tdc->id);
 
-	tegra_dma_terminate_all(dc);
+	if (tdc->busy)
+		tegra_dma_terminate_all(dc);
 
 	spin_lock_irqsave(&tdc->lock, flags);
 	list_splice_init(&tdc->pending_sg_req, &sg_req_list);

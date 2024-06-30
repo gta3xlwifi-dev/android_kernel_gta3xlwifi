@@ -781,9 +781,6 @@ bool virtqueue_poll(struct virtqueue *_vq, unsigned last_used_idx)
 {
 	struct vring_virtqueue *vq = to_vvq(_vq);
 
-	if (unlikely(vq->broken))
-		return false;
-
 	virtio_mb(vq->weak_barriers);
 	return (u16)last_used_idx != virtio16_to_cpu(_vq->vdev, vq->vring.used->idx);
 }
@@ -1019,7 +1016,7 @@ bool virtqueue_is_broken(struct virtqueue *_vq)
 {
 	struct vring_virtqueue *vq = to_vvq(_vq);
 
-	return READ_ONCE(vq->broken);
+	return vq->broken;
 }
 EXPORT_SYMBOL_GPL(virtqueue_is_broken);
 
@@ -1033,9 +1030,7 @@ void virtio_break_device(struct virtio_device *dev)
 
 	list_for_each_entry(_vq, &dev->vqs, list) {
 		struct vring_virtqueue *vq = to_vvq(_vq);
-
-		/* Pairs with READ_ONCE() in virtqueue_is_broken(). */
-		WRITE_ONCE(vq->broken, true);
+		vq->broken = true;
 	}
 }
 EXPORT_SYMBOL_GPL(virtio_break_device);

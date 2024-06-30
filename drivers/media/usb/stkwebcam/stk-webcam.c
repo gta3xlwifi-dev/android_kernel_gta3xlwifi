@@ -642,7 +642,8 @@ static int v4l_stk_release(struct file *fp)
 		dev->owner = NULL;
 	}
 
-	usb_autopm_put_interface(dev->interface);
+	if (is_present(dev))
+		usb_autopm_put_interface(dev->interface);
 	mutex_unlock(&dev->lock);
 	return v4l2_fh_release(fp);
 }
@@ -1353,7 +1354,7 @@ static int stk_camera_probe(struct usb_interface *interface,
 	if (!dev->isoc_ep) {
 		STK_ERROR("Could not find isoc-in endpoint");
 		err = -ENODEV;
-		goto error_put;
+		goto error;
 	}
 	dev->vsettings.palette = V4L2_PIX_FMT_RGB565;
 	dev->vsettings.mode = MODE_VGA;
@@ -1366,12 +1367,10 @@ static int stk_camera_probe(struct usb_interface *interface,
 
 	err = stk_register_video_device(dev);
 	if (err)
-		goto error_put;
+		goto error;
 
 	return 0;
 
-error_put:
-	usb_put_intf(interface);
 error:
 	v4l2_ctrl_handler_free(hdl);
 	v4l2_device_unregister(&dev->v4l2_dev);

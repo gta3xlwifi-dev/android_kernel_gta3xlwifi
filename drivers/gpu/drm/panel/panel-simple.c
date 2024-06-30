@@ -920,7 +920,7 @@ static const struct drm_display_mode lg_lb070wv8_mode = {
 static const struct panel_desc lg_lb070wv8 = {
 	.modes = &lg_lb070wv8_mode,
 	.num_modes = 1,
-	.bpc = 8,
+	.bpc = 16,
 	.size = {
 		.width = 151,
 		.height = 91,
@@ -1389,14 +1389,7 @@ static int panel_simple_dsi_probe(struct mipi_dsi_device *dsi)
 	dsi->format = desc->format;
 	dsi->lanes = desc->lanes;
 
-	err = mipi_dsi_attach(dsi);
-	if (err) {
-		struct panel_simple *panel = dev_get_drvdata(&dsi->dev);
-
-		drm_panel_remove(&panel->base);
-	}
-
-	return err;
+	return mipi_dsi_attach(dsi);
 }
 
 static int panel_simple_dsi_remove(struct mipi_dsi_device *dsi)

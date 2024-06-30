@@ -845,7 +845,9 @@ static int mt_input_mapping(struct hid_device *hdev, struct hid_input *hi,
 	if (!td->mtclass.export_all_inputs &&
 	    field->application != HID_DG_TOUCHSCREEN &&
 	    field->application != HID_DG_PEN &&
-	    field->application != HID_DG_TOUCHPAD)
+	    field->application != HID_DG_TOUCHPAD &&
+	    field->application != HID_GD_KEYBOARD &&
+	    field->application != HID_CP_CONSUMER_CONTROL)
 		return -1;
 
 	/*
@@ -1302,9 +1304,6 @@ static const struct hid_device_id mt_devices[] = {
 	{ .driver_data = MT_CLS_EGALAX_SERIAL,
 		MT_USB_DEVICE(USB_VENDOR_ID_DWAV,
 			USB_DEVICE_ID_DWAV_EGALAX_MULTITOUCH_A001) },
-	{ .driver_data = MT_CLS_EGALAX,
-		MT_USB_DEVICE(USB_VENDOR_ID_DWAV,
-			USB_DEVICE_ID_DWAV_EGALAX_MULTITOUCH_C002) },
 
 	/* Elitegroup panel */
 	{ .driver_data = MT_CLS_SERIAL,

@@ -260,6 +260,7 @@
 #include <linux/irq.h>
 #include <linux/syscalls.h>
 #include <linux/completion.h>
+#include <linux/freezer.h>
 
 #include <asm/processor.h>
 #include <asm/uaccess.h>
@@ -678,6 +679,7 @@ retry:
 		r->initialized = 1;
 		r->entropy_total = 0;
 		if (r == &nonblocking_pool) {
+			prandom_reseed_late();
 			process_random_ready_list();
 			wake_up_all(&urandom_init_wait);
 			pr_notice("random: %s pool is initialized\n", r->name);
@@ -1350,7 +1352,7 @@ void get_random_bytes_arch(void *buf, int nbytes)
 
 		if (!arch_get_random_long(&v))
 			break;
-		
+
 		memcpy(p, &v, chunk);
 		p += chunk;
 		nbytes -= chunk;
@@ -1823,6 +1825,9 @@ unsigned int get_random_int(void)
 	__u32 *hash;
 	unsigned int ret;
 
+	if (arch_get_random_int(&ret))
+		return ret;
+
 	hash = get_cpu_var(get_random_int_hash);
 
 	hash[0] += current->pid + jiffies + random_get_entropy();
@@ -1841,6 +1846,9 @@ unsigned long get_random_long(void)
 {
 	__u32 *hash;
 	unsigned long ret;
+
+	if (arch_get_random_long(&ret))
+		return ret;
 
 	hash = get_cpu_var(get_random_int_hash);
 
@@ -1889,7 +1897,7 @@ void add_hwgenerator_randomness(const char *buffer, size_t count,
 		 * random_write_wakeup_thresh, or when the calling
 		 * thread is about to terminate.
 		 */
-		wait_event_interruptible(random_write_wait,
+		wait_event_freezable(random_write_wait,
 					 kthread_should_stop() ||
 			ENTROPY_BITS(&input_pool) <= random_write_wakeup_bits);
 	}

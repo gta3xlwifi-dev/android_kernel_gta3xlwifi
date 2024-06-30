@@ -49,8 +49,7 @@ static const struct lbs_fw_table fw_table[] = {
 	{ MODEL_8388, "libertas/usb8388_v5.bin", NULL },
 	{ MODEL_8388, "libertas/usb8388.bin", NULL },
 	{ MODEL_8388, "usb8388.bin", NULL },
-	{ MODEL_8682, "libertas/usb8682.bin", NULL },
-	{ 0, NULL, NULL }
+	{ MODEL_8682, "libertas/usb8682.bin", NULL }
 };
 
 static struct usb_device_id if_usb_table[] = {
@@ -291,7 +290,6 @@ err_add_card:
 	if_usb_reset_device(cardp);
 dealloc:
 	if_usb_free(cardp);
-	kfree(cardp);
 
 error:
 	return r;
@@ -318,7 +316,6 @@ static void if_usb_disconnect(struct usb_interface *intf)
 
 	/* Unlink and free urb */
 	if_usb_free(cardp);
-	kfree(cardp);
 
 	usb_set_intfdata(intf, NULL);
 	usb_put_dev(interface_to_usbdev(intf));

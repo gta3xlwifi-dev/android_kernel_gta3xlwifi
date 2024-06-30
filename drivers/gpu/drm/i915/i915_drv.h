@@ -891,12 +891,6 @@ struct intel_context {
 		int pin_count;
 	} engine[I915_NUM_RINGS];
 
-	/* jump_whitelist: Bit array for tracking cmds during cmdparsing */
-	unsigned long *jump_whitelist;
-
-	/* jump_whitelist_cmds: No of cmd slots available */
-	uint32_t jump_whitelist_cmds;
-
 	struct list_head link;
 };
 
@@ -1159,7 +1153,6 @@ struct intel_gen6_power_mgmt {
 	bool client_boost;
 
 	bool enabled;
-	bool ctx_corrupted;
 	struct delayed_work delayed_resume_work;
 	unsigned boosts;
 
@@ -1719,8 +1712,6 @@ struct drm_i915_private {
 
 	struct intel_uncore uncore;
 
-	struct mutex tlb_invalidate_lock;
-
 	struct i915_virtual_gpu vgpu;
 
 	struct intel_guc guc;
@@ -2067,9 +2058,6 @@ struct drm_i915_gem_object {
 	 * inactive (ready to be unbound) list.
 	 */
 	unsigned int active:I915_NUM_RINGS;
-
-	unsigned long flags;
-#define I915_BO_WAS_BOUND_BIT    0
 
 	/**
 	 * This is set if the object has been written to since last bound
@@ -2551,9 +2539,6 @@ struct drm_i915_cmd_table {
 #define HAS_BSD2(dev)		(INTEL_INFO(dev)->ring_mask & BSD2_RING)
 #define HAS_BLT(dev)		(INTEL_INFO(dev)->ring_mask & BLT_RING)
 #define HAS_VEBOX(dev)		(INTEL_INFO(dev)->ring_mask & VEBOX_RING)
-
-#define HAS_SECURE_BATCHES(dev_priv) (INTEL_INFO(dev_priv)->gen < 6)
-
 #define HAS_LLC(dev)		(INTEL_INFO(dev)->has_llc)
 #define HAS_WT(dev)		((IS_HASWELL(dev) || IS_BROADWELL(dev)) && \
 				 __I915__(dev)->ellc_size)
@@ -2568,18 +2553,8 @@ struct drm_i915_cmd_table {
 #define HAS_OVERLAY(dev)		(INTEL_INFO(dev)->has_overlay)
 #define OVERLAY_NEEDS_PHYSICAL(dev)	(INTEL_INFO(dev)->overlay_needs_physical)
 
-/*
- * The Gen7 cmdparser copies the scanned buffer to the ggtt for execution
- * All later gens can run the final buffer from the ppgtt
- */
-#define CMDPARSER_USES_GGTT(dev_priv) IS_GEN7(dev_priv)
-
 /* Early gen2 have a totally busted CS tlb and require pinned batches. */
 #define HAS_BROKEN_CS_TLB(dev)		(IS_I830(dev) || IS_845G(dev))
-
-#define NEEDS_RC6_CTX_CORRUPTION_WA(dev)	\
-	(IS_BROADWELL(dev) || INTEL_INFO(dev)->gen == 9)
-
 /*
  * dp aux and gmbus irq on gen4 seems to be able to generate legacy interrupts
  * even when in MSI mode. This results in spurious interrupt warnings if the
@@ -3301,19 +3276,16 @@ void i915_get_extra_instdone(struct drm_device *dev, uint32_t *instdone);
 const char *i915_cache_level_str(struct drm_i915_private *i915, int type);
 
 /* i915_cmd_parser.c */
-int i915_cmd_parser_get_version(struct drm_i915_private *dev_priv);
+int i915_cmd_parser_get_version(void);
 int i915_cmd_parser_init_ring(struct intel_engine_cs *ring);
 void i915_cmd_parser_fini_ring(struct intel_engine_cs *ring);
 bool i915_needs_cmd_parser(struct intel_engine_cs *ring);
-int i915_parse_cmds(struct intel_context *cxt,
-		    struct intel_engine_cs *ring,
+int i915_parse_cmds(struct intel_engine_cs *ring,
 		    struct drm_i915_gem_object *batch_obj,
-		    u64 user_batch_start,
+		    struct drm_i915_gem_object *shadow_batch_obj,
 		    u32 batch_start_offset,
 		    u32 batch_len,
-		    struct drm_i915_gem_object *shadow_batch_obj,
-		    u64 shadow_batch_start);
-
+		    bool is_master);
 
 /* i915_suspend.c */
 extern int i915_save_state(struct drm_device *dev);
