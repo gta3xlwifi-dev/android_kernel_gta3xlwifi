@@ -1113,6 +1113,10 @@ JBD2_FEATURE_INCOMPAT_FUNCS(csum3,		CSUM_V3)
 						 * data write error in ordered
 						 * mode */
 #define JBD2_REC_ERR	0x080	/* The errno in the sb has been recorded */
+#ifdef CONFIG_JOURNAL_DATA_TAG
+#define JBD2_JOURNAL_TAG       0x800   /* Journaling is working in journal
+					* data tagging mode */
+#endif
 
 /*
  * Function declarations for the journaling transaction and buffer
@@ -1440,7 +1444,7 @@ static inline int jbd2_space_needed(journal_t *journal)
 static inline unsigned long jbd2_log_space_left(journal_t *journal)
 {
 	/* Allow for rounding errors */
-	long free = journal->j_free - 32;
+	unsigned long free = journal->j_free - 32;
 
 	if (journal->j_committing_transaction) {
 		unsigned long committing = atomic_read(&journal->
@@ -1449,7 +1453,7 @@ static inline unsigned long jbd2_log_space_left(journal_t *journal)
 		/* Transaction + control blocks */
 		free -= committing + (committing >> JBD2_CONTROL_BLOCKS_SHIFT);
 	}
-	return max_t(long, free, 0);
+	return free;
 }
 
 /*

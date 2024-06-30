@@ -31,7 +31,7 @@
 #include <linux/hdlc/ioctl.h>
 
 /* For glibc compatibility. An empty enum does not compile. */
-#if __UAPI_DEF_IF_NET_DEVICE_FLAGS_LOWER_UP_DORMANT_ECHO != 0 || \
+#if __UAPI_DEF_IF_NET_DEVICE_FLAGS_LOWER_UP_DORMANT_ECHO != 0 && \
     __UAPI_DEF_IF_NET_DEVICE_FLAGS != 0
 /**
  * enum net_device_flags - &struct net_device flags
@@ -99,7 +99,7 @@ enum net_device_flags {
 	IFF_ECHO			= 1<<18, /* volatile */
 #endif /* __UAPI_DEF_IF_NET_DEVICE_FLAGS_LOWER_UP_DORMANT_ECHO */
 };
-#endif /* __UAPI_DEF_IF_NET_DEVICE_FLAGS_LOWER_UP_DORMANT_ECHO != 0 || __UAPI_DEF_IF_NET_DEVICE_FLAGS != 0 */
+#endif /* __UAPI_DEF_IF_NET_DEVICE_FLAGS_LOWER_UP_DORMANT_ECHO != 0 && __UAPI_DEF_IF_NET_DEVICE_FLAGS != 0 */
 
 /* for compatibility with glibc net/if.h */
 #if __UAPI_DEF_IF_NET_DEVICE_FLAGS
@@ -126,6 +126,11 @@ enum net_device_flags {
 #define IFF_DORMANT			IFF_DORMANT
 #define IFF_ECHO			IFF_ECHO
 #endif /* __UAPI_DEF_IF_NET_DEVICE_FLAGS_LOWER_UP_DORMANT_ECHO */
+
+#ifdef CONFIG_MPTCP
+	#define IFF_NOMULTIPATH	0x80000		/* Disable for MPTCP 		*/
+	#define IFF_MPBACKUP	0x100000	/* Use as backup path for MPTCP */
+#endif
 
 #define IFF_VOLATILE	(IFF_LOOPBACK|IFF_POINTOPOINT|IFF_BROADCAST|IFF_ECHO|\
 		IFF_MASTER|IFF_SLAVE|IFF_RUNNING|IFF_LOWER_UP|IFF_DORMANT)

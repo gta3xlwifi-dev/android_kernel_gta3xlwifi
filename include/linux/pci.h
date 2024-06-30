@@ -1442,9 +1442,8 @@ static inline int pci_set_dma_seg_boundary(struct pci_dev *dev,
 { return -EIO; }
 static inline int pci_assign_resource(struct pci_dev *dev, int i)
 { return -EBUSY; }
-static inline int __must_check __pci_register_driver(struct pci_driver *drv,
-						     struct module *owner,
-						     const char *mod_name)
+static inline int __pci_register_driver(struct pci_driver *drv,
+					struct module *owner)
 { return 0; }
 static inline int pci_register_driver(struct pci_driver *drv)
 { return 0; }

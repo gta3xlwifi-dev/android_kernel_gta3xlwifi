@@ -28,10 +28,6 @@ size_t strlcpy(char *, const char *, size_t);
 #ifndef __HAVE_ARCH_STRSCPY
 ssize_t strscpy(char *, const char *, size_t);
 #endif
-
-/* Wraps calls to strscpy()/memset(), no arch specific code required */
-ssize_t strscpy_pad(char *dest, const char *src, size_t count);
-
 #ifndef __HAVE_ARCH_STRCAT
 extern char * strcat(char *, const char *);
 #endif
@@ -102,36 +98,6 @@ extern __kernel_size_t strcspn(const char *,const char *);
 #ifndef __HAVE_ARCH_MEMSET
 extern void * memset(void *,int,__kernel_size_t);
 #endif
-
-#ifndef __HAVE_ARCH_MEMSET16
-extern void *memset16(uint16_t *, uint16_t, __kernel_size_t);
-#endif
-
-#ifndef __HAVE_ARCH_MEMSET32
-extern void *memset32(uint32_t *, uint32_t, __kernel_size_t);
-#endif
-
-#ifndef __HAVE_ARCH_MEMSET64
-extern void *memset64(uint64_t *, uint64_t, __kernel_size_t);
-#endif
-
-static inline void *memset_l(unsigned long *p, unsigned long v,
-		__kernel_size_t n)
-{
-	if (BITS_PER_LONG == 32)
-		return memset32((uint32_t *)p, v, n);
-	else
-		return memset64((uint64_t *)p, v, n);
-}
-
-static inline void *memset_p(void **p, void *v, __kernel_size_t n)
-{
-	if (BITS_PER_LONG == 32)
-		return memset32((uint32_t *)p, (uintptr_t)v, n);
-	else
-		return memset64((uint64_t *)p, (uintptr_t)v, n);
-}
-
 #ifndef __HAVE_ARCH_MEMCPY
 extern void * memcpy(void *,const void *,__kernel_size_t);
 #endif
@@ -143,9 +109,6 @@ extern void * memscan(void *,int,__kernel_size_t);
 #endif
 #ifndef __HAVE_ARCH_MEMCMP
 extern int memcmp(const void *,const void *,__kernel_size_t);
-#endif
-#ifndef __HAVE_ARCH_BCMP
-extern int bcmp(const void *,const void *,__kernel_size_t);
 #endif
 #ifndef __HAVE_ARCH_MEMCHR
 extern void * memchr(const void *,int,__kernel_size_t);
@@ -170,6 +133,18 @@ static inline int strtobool(const char *s, bool *res)
 {
 	return kstrtobool(s, res);
 }
+
+int match_string(const char * const *array, size_t n, const char *string);
+int __sysfs_match_string(const char * const *array, size_t n, const char *s);
+
+/**
+ * sysfs_match_string - matches given string in an array
+ * @_a: array of strings
+ * @_s: string to match with
+ *
+ * Helper for __sysfs_match_string(). Calculates the size of @a automatically.
+ */
+#define sysfs_match_string(_a, _s) __sysfs_match_string(_a, ARRAY_SIZE(_a), _s)
 
 #ifdef CONFIG_BINARY_PRINTF
 int vbin_printf(u32 *bin_buf, size_t size, const char *fmt, va_list args);

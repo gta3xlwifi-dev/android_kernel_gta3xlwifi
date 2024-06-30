@@ -17,6 +17,14 @@
 #include <linux/init.h>
 #include <linux/types.h>
 
+#define PSCI_UNUSED_INDEX		128
+#define PSCI_CLUSTER_SLEEP		(PSCI_UNUSED_INDEX)
+#define PSCI_SYSTEM_IDLE		(PSCI_UNUSED_INDEX + 1)
+#define PSCI_SYSTEM_IDLE_CLUSTER_SLEEP	(PSCI_UNUSED_INDEX + 2)
+#define PSCI_SYSTEM_IDLE_AUDIO		(PSCI_UNUSED_INDEX + 3)
+#define PSCI_CP_CALL			(PSCI_UNUSED_INDEX + 4)
+#define PSCI_SYSTEM_SLEEP		(PSCI_UNUSED_INDEX + 5)
+
 #define PSCI_POWER_STATE_TYPE_STANDBY		0
 #define PSCI_POWER_STATE_TYPE_POWER_DOWN	1
 
@@ -36,6 +44,7 @@ enum smccc_version {
 };
 
 struct psci_operations {
+	u32 (*get_version)(void);
 	int (*cpu_suspend)(u32 state, unsigned long entry_point);
 	int (*cpu_off)(u32 state);
 	int (*cpu_on)(unsigned long cpuid, unsigned long entry_point);

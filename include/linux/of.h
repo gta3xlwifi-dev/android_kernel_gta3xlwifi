@@ -199,8 +199,8 @@ extern struct device_node *of_find_all_nodes(struct device_node *prev);
 static inline u64 of_read_number(const __be32 *cell, int size)
 {
 	u64 r = 0;
-	for (; size--; cell++)
-		r = (r << 32) | be32_to_cpu(*cell);
+	while (size--)
+		r = (r << 32) | be32_to_cpu(*(cell++));
 	return r;
 }
 
@@ -345,6 +345,8 @@ extern int of_machine_is_compatible(const char *compat);
 extern int of_add_property(struct device_node *np, struct property *prop);
 extern int of_remove_property(struct device_node *np, struct property *prop);
 extern int of_update_property(struct device_node *np, struct property *newprop);
+extern bool of_find_n_match_cpu_property(struct device_node *cpun,
+			const char *prop_name, int cpu, unsigned int *thread);
 
 /* For updating the device tree at runtime */
 #define OF_RECONFIG_ATTACH_NODE		0x0001
@@ -629,6 +631,12 @@ static inline int of_alias_get_highest_id(const char *stem)
 static inline int of_machine_is_compatible(const char *compat)
 {
 	return 0;
+}
+
+static inline bool of_find_n_match_cpu_property(struct device_node *cpun,
+			const char *prop_name, int cpu, unsigned int *thread)
+{
+	return false;
 }
 
 static inline bool of_console_check(const struct device_node *dn, const char *name, int index)
@@ -941,7 +949,6 @@ static inline int of_get_available_child_count(const struct device_node *np)
 #define _OF_DECLARE(table, name, compat, fn, fn_type)			\
 	static const struct of_device_id __of_table_##name		\
 		__used __section(__##table##_of_table)			\
-		__aligned(__alignof__(struct of_device_id))		\
 		 = { .compatible = compat,				\
 		     .data = (fn == (fn_type)NULL) ? fn : fn  }
 #else

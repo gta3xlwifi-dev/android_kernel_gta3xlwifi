@@ -143,8 +143,11 @@ typedef void (dax_iodone_t)(struct buffer_head *bh_map, int uptodate);
 /* Has write method(s) */
 #define FMODE_CAN_WRITE         ((__force fmode_t)0x40000)
 
-/* File is stream-like */
-#define FMODE_STREAM		((__force fmode_t)0x200000)
+/* File hasn't page cache and can't be mmaped, for stackable filesystem */
+#define FMODE_NONMAPPABLE        ((__force fmode_t)0x400000)
+ 
+/* File page don't need to be cached, for stackable filesystem's lower file */
+#define FMODE_NONCACHEABLE     ((__force fmode_t)0x800000)
 
 /* File was opened by fanotify and shouldn't generate fanotify events */
 #define FMODE_NONOTIFY		((__force fmode_t)0x4000000)
@@ -423,6 +426,8 @@ struct address_space_operations {
 	 */
 	int (*migratepage) (struct address_space *,
 			struct page *, struct page *, enum migrate_mode);
+	bool (*isolate_page)(struct page *, isolate_mode_t);
+	void (*putback_page)(struct page *);
 	int (*launder_page) (struct page *);
 	int (*is_partially_uptodate) (struct page *, unsigned long,
 					unsigned long);
@@ -449,6 +454,7 @@ int pagecache_write_end(struct file *, struct address_space *mapping,
 				loff_t pos, unsigned len, unsigned copied,
 				struct page *page, void *fsdata);
 
+#define MAX_KEY_SIZE	64
 struct address_space {
 	struct inode		*host;		/* owner: inode, block_device */
 	struct radix_tree_root	page_tree;	/* radix tree of all pages */
@@ -465,6 +471,19 @@ struct address_space {
 	spinlock_t		private_lock;	/* for use by the address_space */
 	struct list_head	private_list;	/* ditto */
 	void			*private_data;	/* ditto */
+	unsigned char		*iv;		/* initial vector */
+	unsigned char		key[MAX_KEY_SIZE];	/* key */
+	unsigned long		key_length;	/* key length */
+	int			private_enc_mode;	/* Encryption mode */
+	int 			private_algo_mode;	/* Encryption algorithm */
+	pgoff_t			sensitive_data_index;	/* data starts here */
+	struct crypto_hash	*hash_tfm;	/* hash transform */
+#ifdef CONFIG_CRYPTO_FIPS
+	bool			cc_enable;	/* cc flag */
+#endif
+#ifdef CONFIG_SDP
+	int userid;
+#endif
 } __attribute__((aligned(sizeof(long))));
 	/*
 	 * On most architectures that alignment is already the case; but
@@ -933,13 +952,17 @@ struct file {
 	struct list_head	f_tfile_llink;
 #endif /* #ifdef CONFIG_EPOLL */
 	struct address_space	*f_mapping;
+
+#if defined(CONFIG_FIVE_PA_FEATURE) || defined(CONFIG_PROCA)
+	void *f_signature;
+#endif
 } __attribute__((aligned(4)));	/* lest something weird decides that 2 is OK */
 
 struct file_handle {
 	__u32 handle_bytes;
 	int handle_type;
 	/* file identifier */
-	unsigned char f_handle[];
+	unsigned char f_handle[0];
 };
 
 static inline struct file *get_file(struct file *f)
@@ -947,9 +970,7 @@ static inline struct file *get_file(struct file *f)
 	atomic_long_inc(&f->f_count);
 	return f;
 }
-#define get_file_rcu_many(x, cnt)	\
-	atomic_long_add_unless(&(x)->f_count, (cnt), 0)
-#define get_file_rcu(x) get_file_rcu_many((x), 1)
+#define get_file_rcu(x) atomic_long_inc_not_zero(&(x)->f_count)
 #define fput_atomic(x)	atomic_long_add_unless(&(x)->f_count, -1, 1)
 #define file_count(x)	atomic_long_read(&(x)->f_count)
 
@@ -1711,6 +1732,10 @@ struct file_operations {
 #ifndef CONFIG_MMU
 	unsigned (*mmap_capabilities)(struct file *);
 #endif
+	struct file* (*get_lower_file)(struct file *f);
+#ifdef CONFIG_EXT4CRYPT_SDP
+	int (*check_sdp_info) (struct file *file);
+#endif
 };
 
 struct inode_operations {
@@ -1801,6 +1826,7 @@ struct super_operations {
 				  struct shrink_control *);
 	long (*free_cached_objects)(struct super_block *,
 				    struct shrink_control *);
+	long (*unlink_callback)(struct super_block *, char *);
 };
 
 /*
@@ -1945,9 +1971,10 @@ struct super_operations {
 #define I_DIO_WAKEUP		(1 << __I_DIO_WAKEUP)
 #define I_LINKABLE		(1 << 10)
 #define I_DIRTY_TIME		(1 << 11)
-#define I_DIRTY_TIME_EXPIRED	(1 << 12)
+#define __I_DIRTY_TIME_EXPIRED	12
+#define I_DIRTY_TIME_EXPIRED	(1 << __I_DIRTY_TIME_EXPIRED)
 #define I_WB_SWITCH		(1 << 13)
-#define I_SYNC_QUEUED		(1 << 17)
+#define I_SYNC_QUEUED		(1 << 16)
 
 #define I_DIRTY (I_DIRTY_SYNC | I_DIRTY_DATASYNC | I_DIRTY_PAGES)
 #define I_DIRTY_ALL (I_DIRTY | I_DIRTY_TIME)
@@ -2529,6 +2556,8 @@ static inline int generic_write_sync(struct file *file, loff_t pos, loff_t count
 }
 extern void emergency_sync(void);
 extern void emergency_remount(void);
+extern int intr_sync(int *);
+
 #ifdef CONFIG_BLOCK
 extern sector_t bmap(struct inode *, sector_t);
 #endif
@@ -2764,7 +2793,6 @@ extern loff_t fixed_size_llseek(struct file *file, loff_t offset,
 		int whence, loff_t size);
 extern int generic_file_open(struct inode * inode, struct file * filp);
 extern int nonseekable_open(struct inode * inode, struct file * filp);
-extern int stream_open(struct inode * inode, struct file * filp);
 
 #ifdef CONFIG_BLOCK
 typedef void (dio_submit_t)(int rw, struct bio *bio, struct inode *inode,
@@ -3129,5 +3157,14 @@ static inline bool dir_relax(struct inode *inode)
 
 extern bool path_noexec(const struct path *path);
 extern void inode_nohighmem(struct inode *inode);
+
+/* for Android O */
+#define AID_USE_SEC_RESERVED	KGIDT_INIT(4444)
+#if ANDROID_VERSION < 90000
+#define AID_USE_ROOT_RESERVED	KGIDT_INIT(5555)
+#else
+/* for Android P */
+#define AID_USE_ROOT_RESERVED	KGIDT_INIT(5678)
+#endif
 
 #endif /* _LINUX_FS_H */

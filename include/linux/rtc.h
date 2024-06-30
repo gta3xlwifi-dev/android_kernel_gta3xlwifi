@@ -20,6 +20,10 @@ extern int rtc_month_days(unsigned int month, unsigned int year);
 extern int rtc_year_days(unsigned int day, unsigned int month, unsigned int year);
 extern int rtc_valid_tm(struct rtc_time *tm);
 extern time64_t rtc_tm_to_time64(struct rtc_time *tm);
+#ifdef CONFIG_RTC_HIGH_RES
+extern int rtc_valid_hrtm(struct rtc_hrtime *tm);
+extern time64_t rtc_hrtm_to_time64(struct rtc_hrtime *tm);
+#endif
 extern void rtc_time64_to_tm(time64_t time, struct rtc_time *tm);
 ktime_t rtc_tm_to_ktime(struct rtc_time tm);
 struct rtc_time rtc_ktime_to_tm(ktime_t kt);
@@ -81,9 +85,16 @@ struct rtc_class_ops {
 	void (*release)(struct device *);
 	int (*ioctl)(struct device *, unsigned int, unsigned long);
 	int (*read_time)(struct device *, struct rtc_time *);
+#ifdef CONFIG_RTC_HIGH_RES
+	int (*read_hrtime)(struct device *, struct rtc_hrtime *);
+#endif
 	int (*set_time)(struct device *, struct rtc_time *);
 	int (*read_alarm)(struct device *, struct rtc_wkalrm *);
 	int (*set_alarm)(struct device *, struct rtc_wkalrm *);
+#if defined(CONFIG_RTC_ALARM_BOOT)
+	int (*set_alarm_boot)(struct device *, struct rtc_wkalrm *);
+	int (*get_alarm_boot)(struct device *, struct rtc_wkalrm *);
+#endif
 	int (*proc)(struct device *, struct seq_file *);
 	int (*set_mmss64)(struct device *, time64_t secs);
 	int (*set_mmss)(struct device *, unsigned long secs);
@@ -167,6 +178,9 @@ extern void devm_rtc_device_unregister(struct device *dev,
 					struct rtc_device *rtc);
 
 extern int rtc_read_time(struct rtc_device *rtc, struct rtc_time *tm);
+#ifdef CONFIG_RTC_HIGH_RES
+extern int rtc_read_hrtime(struct rtc_device *rtc, struct rtc_hrtime *tm);
+#endif
 extern int rtc_set_time(struct rtc_device *rtc, struct rtc_time *tm);
 extern int rtc_set_ntp_time(struct timespec64 now);
 int __rtc_read_alarm(struct rtc_device *rtc, struct rtc_wkalrm *alarm);
@@ -174,6 +188,12 @@ extern int rtc_read_alarm(struct rtc_device *rtc,
 			struct rtc_wkalrm *alrm);
 extern int rtc_set_alarm(struct rtc_device *rtc,
 				struct rtc_wkalrm *alrm);
+#if defined(CONFIG_RTC_ALARM_BOOT)
+extern int rtc_set_alarm_boot(struct rtc_device *rtc,
+			      struct rtc_wkalrm *alarm);
+extern int rtc_get_alarm_boot(struct rtc_device *rtc,
+				struct rtc_wkalrm *alarm);
+#endif
 extern int rtc_initialize_alarm(struct rtc_device *rtc,
 				struct rtc_wkalrm *alrm);
 extern void rtc_update_irq(struct rtc_device *rtc,
@@ -221,4 +241,7 @@ extern int rtc_hctosys_ret;
 #define rtc_hctosys_ret -ENODEV
 #endif
 
+#if defined(CONFIG_RTC_ALARM_BOOT)
+extern unsigned int lpcharge;
+#endif
 #endif /* _LINUX_RTC_H_ */
