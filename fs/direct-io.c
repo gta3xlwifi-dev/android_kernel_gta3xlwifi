@@ -389,6 +389,7 @@ static inline void dio_bio_submit(struct dio *dio, struct dio_submit *sdio)
 {
 	struct bio *bio = sdio->bio;
 	unsigned long flags;
+	struct inode *inode;
 
 	bio->bi_private = dio;
 
@@ -400,6 +401,13 @@ static inline void dio_bio_submit(struct dio *dio, struct dio_submit *sdio)
 		bio_set_pages_dirty(bio);
 
 	dio->bio_bdev = bio->bi_bdev;
+	bio->bi_dio_inode = dio->inode;
+	inode = dio->inode;
+
+	bio->private_enc_mode = inode->i_mapping->private_enc_mode;
+	bio->private_algo_mode = inode->i_mapping->private_algo_mode;
+	bio->key = inode->i_mapping->key;
+	bio->key_length = inode->i_mapping->key_length;
 
 	if (sdio->submit_io) {
 		sdio->submit_io(dio->rw, bio, dio->inode,
@@ -780,7 +788,6 @@ submit_page_section(struct dio *dio, struct dio_submit *sdio, struct page *page,
 		    struct buffer_head *map_bh)
 {
 	int ret = 0;
-	int boundary = sdio->boundary;	/* dio_send_cur_page may clear it */
 
 	if (dio->rw & WRITE) {
 		/*
@@ -819,10 +826,10 @@ submit_page_section(struct dio *dio, struct dio_submit *sdio, struct page *page,
 	sdio->cur_page_fs_offset = sdio->block_in_file << sdio->blkbits;
 out:
 	/*
-	 * If boundary then we want to schedule the IO now to
+	 * If sdio->boundary then we want to schedule the IO now to
 	 * avoid metadata seeks.
 	 */
-	if (boundary) {
+	if (sdio->boundary) {
 		ret = dio_send_cur_page(dio, sdio, map_bh);
 		if (sdio->bio)
 			dio_bio_submit(dio, sdio);

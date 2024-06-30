@@ -534,14 +534,12 @@ extern int nfs41_walk_client_list(struct nfs_client *clp,
 
 static inline struct inode *nfs_igrab_and_active(struct inode *inode)
 {
-	struct super_block *sb = inode->i_sb;
-
-	if (sb && nfs_sb_active(sb)) {
-		if (igrab(inode))
-			return inode;
-		nfs_sb_deactive(sb);
+	inode = igrab(inode);
+	if (inode != NULL && !nfs_sb_active(inode->i_sb)) {
+		iput(inode);
+		inode = NULL;
 	}
-	return NULL;
+	return inode;
 }
 
 static inline void nfs_iput_and_deactive(struct inode *inode)
