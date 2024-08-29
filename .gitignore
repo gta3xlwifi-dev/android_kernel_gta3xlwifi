@@ -1,0 +1,7 @@
+*.o
+Image
+Image.gz
+.config
+.config.old
+*vmlinux*
+.tmp_vmlinux*
